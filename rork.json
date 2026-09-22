@@ -1,0 +1,12 @@
+{
+  "apps": [
+    {
+      "name": "Kwhycee",
+      "path": "ios",
+      "framework": "swift",
+      "settings": {
+        "iosBundleId": "app.rork.face-livekwhycee"
+      }
+    }
+  ]
+}
