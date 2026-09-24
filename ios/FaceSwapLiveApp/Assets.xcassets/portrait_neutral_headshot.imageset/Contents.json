@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "portrait_neutral_headshot.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

@@ -46,6 +46,12 @@ nonisolated final class FaceFinder: Sendable {
         return FaceBox(rect: rect)
     }
 
+    /// The upright copy detection runs on. Shared with the 76-point pass so
+    /// both see the same picture the page draws.
+    static func uprightCopy(of image: UIImage) -> CGImage? {
+        workingCopy(of: image)
+    }
+
     /// Redraws the still upright at a small size so orientation metadata can
     /// never flip the result.
     private static func workingCopy(of image: UIImage) -> CGImage? {

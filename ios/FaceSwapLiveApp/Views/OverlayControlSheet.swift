@@ -4,11 +4,15 @@ struct OverlayControlSheet: View {
     @Bindable var viewModel: BrowserViewModel
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(KeptStillStore.noticeSeenKey) private var seenKeptNotice = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 22) {
+                    if !seenKeptNotice {
+                        keptStillNotice
+                    }
                     EnableMediaCard(viewModel: viewModel)
 
                     openMyMediaSection
@@ -48,6 +52,31 @@ struct OverlayControlSheet: View {
         }
         .presentationBackground(MediaTheme.canvas)
         .task { Haptics.prepare() }
+    }
+
+    private var keptStillNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "photo.on.rectangle")
+                .foregroundStyle(MediaTheme.accent)
+            Text(KeptStillStore.notice)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                seenKeptNotice = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(.leading, 14)
+        .padding(.vertical, 4)
+        .background(MediaTheme.card, in: .rect(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(MediaTheme.stroke, lineWidth: 1))
     }
 
     private var openMyMediaSection: some View {

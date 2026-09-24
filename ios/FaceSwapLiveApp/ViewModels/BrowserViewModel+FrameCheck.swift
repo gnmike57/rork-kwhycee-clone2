@@ -22,6 +22,11 @@ final class FrameCheckCache {
         /// conversion of it. AI Expand starts from this so nothing the
         /// conversion cut has to be invented.
         var original: UIImage?
+        var rig: FaceRig?
+        var mapNote: String?
+        var mappedFaces: [MappedFace] = []
+        var mapSearched = false
+        var mapSearching = false
 
         init(image: UIImage) {
             self.image = image
@@ -30,7 +35,7 @@ final class FrameCheckCache {
 
     private(set) var entries: [ObjectIdentifier: Entry] = [:]
 
-    private func entry(for image: UIImage) -> Entry {
+    func entry(for image: UIImage) -> Entry {
         let key = ObjectIdentifier(image)
         if let existing = entries[key], existing.image === image {
             return existing
@@ -41,7 +46,7 @@ final class FrameCheckCache {
         return fresh
     }
 
-    private func lookup(_ image: UIImage) -> Entry? {
+    func lookup(_ image: UIImage) -> Entry? {
         guard let existing = entries[ObjectIdentifier(image)], existing.image === image else { return nil }
         return existing
     }
@@ -51,7 +56,7 @@ final class FrameCheckCache {
     }
 
     /// Bumps observation so views re-read after a background result lands.
-    private func touch() {
+    func touch() {
         entries = entries
     }
 

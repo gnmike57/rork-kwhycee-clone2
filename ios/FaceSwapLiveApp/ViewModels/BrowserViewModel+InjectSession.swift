@@ -83,6 +83,7 @@ extension BrowserViewModel {
         crops[shape] = next
         setShapeCrops(crops, facing: facing, slot: slot)
         pushStillCrops()
+        rememberKeptSlot(facing: facing, slot: slot)
     }
 
     /// Drops one shape's framing back to the untouched cover-fit.

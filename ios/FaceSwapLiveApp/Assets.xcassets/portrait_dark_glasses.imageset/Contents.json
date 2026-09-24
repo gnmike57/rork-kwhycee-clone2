@@ -1,0 +1,12 @@
+{
+  "images": [
+    {
+      "filename": "portrait_dark_glasses.png",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}

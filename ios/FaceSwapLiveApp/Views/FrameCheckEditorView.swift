@@ -18,6 +18,7 @@ struct FrameCheckEditorView: View {
     @State private var customWidth: String = ""
     @State private var customHeight: String = ""
     @State private var didAutoExpand: Bool = false
+    @State private var showFacePoints: Bool = false
 
     private enum ExpandPhase: Equatable {
         case idle
@@ -72,6 +73,7 @@ struct FrameCheckEditorView: View {
                     )
                     toolsRow
                     faceStatus
+                    facePointsChip
                     truePixelsRow
                     if case .failed(let text) = expandPhase {
                         failureRow(text)
@@ -115,8 +117,22 @@ struct FrameCheckEditorView: View {
         } message: {
             Text("The exact pixel size a site asks for, for example 1280 by 720.")
         }
+        .fullScreenCover(isPresented: $showFacePoints) {
+            if let image, let rig = viewModel.frameCache.rig(for: image) {
+                FacePointsEditorView(
+                    image: image,
+                    rig: rig,
+                    faces: viewModel.frameCache.mappedFaces(for: image),
+                    canCopy: viewModel.canCopyFaceCorrections(from: facing, slot: slot),
+                    copyTitle: facing == .front ? "Copy to Back" : "Copy to Front",
+                    onSave: { viewModel.saveFaceRig($0, for: image) },
+                    onCopy: { viewModel.copyFaceCorrections($0, from: facing, slot: slot) }
+                )
+            }
+        }
         .task {
             Haptics.prepare()
+            if let image { viewModel.ensureFaceMap(for: image) }
             if request.autoExpand, !didAutoExpand, isStill {
                 didAutoExpand = true
                 startExpand()
@@ -287,6 +303,38 @@ struct FrameCheckEditorView: View {
             Text(faceStatusText)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    @ViewBuilder
+    private var facePointsChip: some View {
+        if LivingStills.isAvailable, isStill, let image {
+            if let rig = viewModel.frameCache.rig(for: image) {
+                Button {
+                    Haptics.tick()
+                    showFacePoints = true
+                } label: {
+                    Label("Face points", systemImage: "face.smiling")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.black)
+                .background(Capsule().fill(FrameCheckTheme.accent.opacity(0.92)))
+                .accessibilityIdentifier("face-points")
+                .disabled(rig.handleIndex.isEmpty)
+            } else if viewModel.frameCache.hasSearchedMap(for: image) {
+                Text(viewModel.frameCache.mapNote(for: image) ?? FaceMapNote.couldntMap)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+            } else {
+                Text("Looking for a face…")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

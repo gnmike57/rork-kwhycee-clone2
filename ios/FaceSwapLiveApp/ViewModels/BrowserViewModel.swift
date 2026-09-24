@@ -301,8 +301,12 @@ final class BrowserViewModel {
 
     private let bookmarksKey = "browser_bookmarks_v1"
 
+    let keptStills = KeptStillStore()
+    let photoMemory = PhotoMemoryStore()
+
     init() {
         loadBookmarks()
+        restoreKeptStills()
     }
 
     func navigateTo(_ input: String) {
@@ -401,6 +405,7 @@ final class BrowserViewModel {
         }
 
         resetSlotPresentation(facing: facing, slot: slot)
+        dropKeptSlot(facing: facing, slot: slot.rawValue)
 
         // Fresh media means the user intends to use it — enable delivery now
         // that a source exists. Manual switch-off stays sticky until the next
@@ -447,6 +452,8 @@ final class BrowserViewModel {
                 if !keepsPixels {
                     self.autoPrepareFraming(facing: .front, slot: slotIndex)
                 }
+                self.rememberKeptSlot(facing: .front, slot: slotIndex)
+                self.ensureFaceMap(for: prepared.converted)
                 if self.isMediaActive { self.syncMediaToPage() }
             }
         } else if facing == .back {
@@ -465,6 +472,8 @@ final class BrowserViewModel {
             if !preparedForFrame {
                 autoPrepareFraming(facing: .back, slot: slot.rawValue)
             }
+            rememberKeptSlot(facing: .back, slot: slot.rawValue)
+            ensureFaceMap(for: image)
             if isMediaActive { syncMediaToPage() }
         } else {
             generateEXIFForImage(image, facing: facing, slot: slot)
@@ -472,6 +481,8 @@ final class BrowserViewModel {
             if !preparedForFrame {
                 autoPrepareFraming(facing: facing, slot: slot.rawValue)
             }
+            rememberKeptSlot(facing: facing, slot: slot.rawValue)
+            ensureFaceMap(for: image)
             if isMediaActive { syncMediaToPage() }
         }
     }
@@ -547,6 +558,8 @@ final class BrowserViewModel {
             let hasOne = facing == .front ? frontSourceType != nil : backSourceType != nil
             guard hasOne else { return }
         }
+
+        dropKeptSlot(facing: facing, slot: slot.rawValue)
 
         switch (facing, slot) {
         case (.front, .one):
@@ -750,6 +763,8 @@ final class BrowserViewModel {
             frontVideoURL2 = nil
             frontSourceType2 = nil
             imageSchemeHandler.setFrontSourceImage(nil, slot: 1)
+            rememberKeptSlot(facing: .front, slot: 0)
+            dropKeptSlot(facing: .front, slot: 1)
         case .back:
             guard backSourceType2 != nil else {
                 clearSlot(facing: .back, slot: .one)
@@ -780,6 +795,8 @@ final class BrowserViewModel {
             backVideoURL2 = nil
             backSourceType2 = nil
             imageSchemeHandler.setBackSourceImage(nil, slot: 1)
+            rememberKeptSlot(facing: .back, slot: 0)
+            dropKeptSlot(facing: .back, slot: 1)
         }
     }
 
@@ -824,6 +841,7 @@ final class BrowserViewModel {
             if let old = convertedBackVideoURL2 { try? FileManager.default.removeItem(at: old); convertedBackVideoURL2 = nil }
             backCrop2 = .identity
         }
+        dropKeptSlot(facing: facing, slot: slot.rawValue)
     }
 
     func clearAllSources() {
@@ -835,6 +853,7 @@ final class BrowserViewModel {
     }
 
     func clearAllSequences() {
+        keptStills.clearAll()
         clearAllSources()
         imageSchemeHandler.clearAllSourceImages()
         frontQueueIndex = 0
@@ -1235,6 +1254,8 @@ final class BrowserViewModel {
             imageSchemeHandler.backImageData = nil
             imageSchemeHandler.stampBackOnDemand = true
         }
+        rememberKeptSlot(facing: facing, slot: 0)
+        rememberKeptSlot(facing: facing, slot: 1)
         syncMediaToPage()
     }
 

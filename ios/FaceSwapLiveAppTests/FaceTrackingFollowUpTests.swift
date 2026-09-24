@@ -51,14 +51,19 @@ struct FaceTrackingFollowUpTests {
 
     @Test func senderLockKeepsTheFirstPhone() {
         var lock = SenderLock()
-        #expect(lock.accept("Kai's iPhone"))
+        let first = lock.accept("Kai's iPhone")
+        #expect(first)
         #expect(lock.lockedName == "Kai's iPhone")
-        #expect(lock.accept("Kai's iPhone"))
-        #expect(!lock.accept("Other iPhone"))
-        #expect(lock.accept(""))
+        let same = lock.accept("Kai's iPhone")
+        #expect(same)
+        let other = lock.accept("Other iPhone")
+        #expect(!other)
+        let empty = lock.accept("")
+        #expect(empty)
         lock.release()
         #expect(lock.lockedName == nil)
-        #expect(lock.accept("Other iPhone"))
+        let afterRelease = lock.accept("Other iPhone")
+        #expect(afterRelease)
     }
 
     @Test func senderClockMapsFrameTimeAndReanchorsAJump() {
