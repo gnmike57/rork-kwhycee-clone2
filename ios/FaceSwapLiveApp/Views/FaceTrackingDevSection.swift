@@ -44,9 +44,10 @@ struct FaceTrackingDevSection: View {
 
     private var statusRows: some View {
         VStack(spacing: 6) {
-            row("State", tracking.state.label, tint: stateTint)
+            row("State", tracking.statusLabel, tint: stateTint)
+            row("This iPhone", tracking.capability.title)
             row("Readings/s", "\(tracking.readingsPerSecond)")
-            row("Output", tracking.isIdling ? "Idle" : "Tracked")
+            row("Output", tracking.outputCaption)
             row("Baseline", tracking.neutralBaseline == nil ? "Not calibrated" : "Calibrated")
             row("Gate", gateSummary)
         }
@@ -75,8 +76,13 @@ struct FaceTrackingDevSection: View {
         @Bindable var tracking = tracking
 
         return VStack(alignment: .leading, spacing: 8) {
+            Text("This app only listens for face data. It may ask to find devices on the local network so those packets can arrive. Nothing is sent. If no packets arrive, on the other iPhone open Settings → Privacy & Security → Local Network and allow Live Link Face.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             if tracking.addresses.isEmpty {
-                row("Address", "Not on Wi-Fi or a hotspot")
+                row("Address", "Not on Wi-Fi or a hotspot. An IPv6-only network isn't supported.")
             } else {
                 ForEach(tracking.addresses) { address in
                     row(address.label, "\(address.address) : \(tracking.port)")
@@ -84,6 +90,14 @@ struct FaceTrackingDevSection: View {
             }
             if let sender = tracking.senderName {
                 row("Sender", sender)
+            }
+            row("Head", tracking.isExpressionOnly ? "Expression only" : "Included when sent")
+            row("Rejected", tracking.packetRejections.summary)
+            if tracking.senderName != nil {
+                Button("Switch sender") {
+                    tracking.releaseSenderLock()
+                }
+                .font(.caption.weight(.semibold))
             }
             HStack {
                 Text("Port")

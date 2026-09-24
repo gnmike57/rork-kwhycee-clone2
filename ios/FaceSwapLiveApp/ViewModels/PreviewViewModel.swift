@@ -77,6 +77,18 @@ final class PreviewViewModel {
         previewFrame = nil
     }
 
+    /// Stops the camera and waits until the session is down, so face tracking
+    /// can take it back without the two sessions colliding.
+    func stopCaptureAndWait() async {
+        sessionTask?.cancel()
+        let previous = sessionTask
+        sessionTask = nil
+        _ = await previous?.value
+        await captureService.stop()
+        availability = .idle
+        previewFrame = nil
+    }
+
     func switchPosition() {
         runSession { service in await service.switchPosition() }
     }

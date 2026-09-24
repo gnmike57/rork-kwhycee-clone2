@@ -405,7 +405,8 @@
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "FaceSwapLive needs camera access for live face swapping.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "The front camera reads facial movement to animate a still on this device. Video stays on this device and is not saved.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "FaceSwapLive listens for facial movement from a second iPhone running Live Link Face on your Wi-Fi or hotspot. Nothing is sent.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "FaceSwapLive needs microphone access to capture device audio specs for accurate profile matching.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "FaceSwapLive saves your prepared media to Photos so you can choose it from the real iOS picker.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -441,7 +442,8 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_UIFileSharingEnabled = YES;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "FaceSwapLive needs camera access for live face swapping.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "The front camera reads facial movement to animate a still on this device. Video stays on this device and is not saved.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "FaceSwapLive listens for facial movement from a second iPhone running Live Link Face on your Wi-Fi or hotspot. Nothing is sent.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "FaceSwapLive needs microphone access to capture device audio specs for accurate profile matching.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "FaceSwapLive saves your prepared media to Photos so you can choose it from the real iOS picker.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

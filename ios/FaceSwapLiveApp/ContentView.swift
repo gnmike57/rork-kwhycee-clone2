@@ -77,8 +77,9 @@ struct ContentView: View {
             faceTracking.stillOnActiveFeed = isStill
         }
         .onChange(of: selectedTab, initial: true) { _, tab in
-            faceTracking.isCameraNeededElsewhere = tab == .preview
+            faceTracking.setPreviewTabSelected(tab == .preview)
         }
+        .accessibilityIdentifier(profileManager.hasActiveProfile && hasSelectedProfile ? "main-app" : "device-profiles")
         .onChange(of: scenePhase, initial: true) { _, phase in
             faceTracking.isForeground = phase == .active
         }

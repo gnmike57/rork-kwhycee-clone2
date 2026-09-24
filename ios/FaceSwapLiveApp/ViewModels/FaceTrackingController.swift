@@ -43,10 +43,14 @@ final class FaceTrackingController {
     }
 
     /// The user's switch. Not remembered across launches: the camera should
-    /// never come on by itself.
+    /// never come on by itself. App Store builds keep living stills off.
     var isEnabled = false {
         didSet {
             guard isEnabled != oldValue else { return }
+            if isEnabled, !LivingStills.isAvailable {
+                isEnabled = false
+                return
+            }
             reconcile()
         }
     }
@@ -77,6 +81,12 @@ final class FaceTrackingController {
         }
     }
 
+    /// How many times the Preview tab has asked for the camera. A late stop
+    /// from an earlier visit must not release a newer one.
+    private(set) var previewCameraHold = 0
+    private var isPreviewHoldingCamera = false
+    private var isPreviewTabSelected = false
+
     /// Everything the gate needs is true.
     var isAllowedToRun: Bool {
         isEnabled && stillOnActiveFeed && isForeground && !isCameraNeededElsewhere
@@ -95,8 +105,37 @@ final class FaceTrackingController {
     /// Readings in the last second.
     private(set) var readingsPerSecond: Int = 0
 
-    /// The second iPhone's name, once a packet has arrived.
+    /// The second iPhone's name, once a packet has arrived and been locked.
     private(set) var senderName: String?
+
+    /// Dropped Live Link Face datagrams, by reason.
+    private(set) var packetRejections = PacketRejectionCounts()
+
+    /// Link mode has a face, but Stream Head Rotation is off.
+    var isExpressionOnly: Bool {
+        mode == .secondPhone && hasSeenLiveFace && !headPose.hasSeenHeadPose
+    }
+
+    /// Still until a face has been seen, idle when life is playing, tracked while live.
+    var outputCaption: String {
+        if isIdling { return "Idle" }
+        if state.isTracking { return "Tracked" }
+        return "Still"
+    }
+
+    /// Wording for the meter and, later, the status capsule.
+    var statusLabel: String {
+        if isExpressionOnly, state == .receiving {
+            if let senderName {
+                return "Receiving from \(senderName) · expression only"
+            }
+            return "Receiving · expression only"
+        }
+        return state.label
+    }
+
+    /// What this phone can do for same-iPhone tracking.
+    var capability: FaceTrackingCapability { FaceTrackingCapability.current() }
 
     /// Addresses a second iPhone can send to.
     private(set) var addresses: [LocalAddress] = []
@@ -129,9 +168,18 @@ final class FaceTrackingController {
 
     private var lastPoseAt: TimeInterval?
     private var lastPacketAt: TimeInterval?
-    private var everHadReading = false
+    private var hasSeenLiveFace = false
     private var recentReadings: [TimeInterval] = []
     private var tickCount = 0
+    private var appliedTrackerRate = 0
+    private var senderLock = SenderLock()
+    private var senderClock = SenderClock()
+    private var headPose = HeadPosePresence()
+    private var lostSince: TimeInterval?
+    private var didWarnForThisLoss = false
+
+    /// A flicker shorter than this does not buzz.
+    private static let lostHapticDelay: TimeInterval = 1.5
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -156,6 +204,40 @@ final class FaceTrackingController {
 
     func clearNeutralBaseline() {
         neutralBaseline = nil
+    }
+
+    /// Forgets the locked sender so the next packet can take over.
+    func releaseSenderLock() {
+        senderLock.release()
+        senderName = nil
+    }
+
+    /// Stops face tracking before the Preview tab opens its own camera.
+    func beginPreviewCameraUse() -> Int {
+        previewCameraHold += 1
+        isPreviewHoldingCamera = true
+        isCameraNeededElsewhere = true
+        return previewCameraHold
+    }
+
+    /// Called after the Preview camera has stopped. Ignored if a newer visit started.
+    func endPreviewCameraUse(hold: Int) {
+        guard hold == previewCameraHold else { return }
+        isPreviewHoldingCamera = false
+        if !isPreviewTabSelected {
+            isCameraNeededElsewhere = false
+        }
+    }
+
+    /// The Preview tab was selected or left. Leaving does not release the
+    /// camera while that tab's session is still shutting down.
+    func setPreviewTabSelected(_ selected: Bool) {
+        isPreviewTabSelected = selected
+        if selected {
+            isCameraNeededElsewhere = true
+        } else if !isPreviewHoldingCamera {
+            isCameraNeededElsewhere = false
+        }
     }
 
     /// Reuses a baseline remembered for a photo.
@@ -245,11 +327,18 @@ final class FaceTrackingController {
         mixer.reset()
         lastPoseAt = nil
         lastPacketAt = nil
-        everHadReading = false
+        hasSeenLiveFace = false
         recentReadings.removeAll()
         latestTrackedPose = nil
         readingsPerSecond = 0
         senderName = nil
+        senderLock.release()
+        senderClock.reset()
+        headPose.reset()
+        packetRejections.reset()
+        appliedTrackerRate = 0
+        lostSince = nil
+        didWarnForThisLoss = false
     }
 
     // MARK: - Source events
@@ -269,14 +358,22 @@ final class FaceTrackingController {
         let now = FaceClock.now()
 
         switch event {
-        case .pose(let pose, let sender):
-            if let sender { senderName = sender }
+        case .pose(var pose, let sender, let senderTime):
+            if mode == .secondPhone {
+                if let sender, !senderLock.accept(sender) {
+                    packetRejections.record(.wrongSender)
+                    return
+                }
+                if let locked = senderLock.lockedName { senderName = locked }
+                pose.timestamp = senderClock.localTime(qualified: senderTime, receivedAt: now)
+            }
             lastPacketAt = now
-            everHadReading = true
             guard pose.hasFace else {
                 smoother.reset()
                 return
             }
+            hasSeenLiveFace = true
+            if mode == .secondPhone { headPose.observe(pose) }
             let smoothed = smoother.smooth(pose)
             if calibrator.isRunning {
                 if let baseline = calibrator.add(smoothed, at: now) {
@@ -316,6 +413,9 @@ final class FaceTrackingController {
 
         case .failed(let reason):
             fail(.failed(reason))
+
+        case .packetRejected(let reason):
+            packetRejections.record(reason)
         }
     }
 
@@ -355,9 +455,13 @@ final class FaceTrackingController {
 
         let tracked = resampler.sample(at: now - Self.renderLatency)
         mixer.advance(to: now, lastPoseAt: lastPoseAt)
-        let idlePose = idle.pose(at: now)
+        let allowIdle = IdlePolicy.allowsIdle(
+            hasSeenLiveFace: hasSeenLiveFace,
+            reduceMotion: UIAccessibility.isReduceMotionEnabled
+        )
+        let idlePose = allowIdle ? idle.pose(at: now) : .neutral
         outputPose = mixer.mix(tracked: tracked, idle: idlePose)
-        isIdling = mixer.isIdling
+        isIdling = mixer.isIdling && allowIdle
 
         let window = now - 1
         recentReadings.removeAll { $0 < window }
@@ -372,9 +476,17 @@ final class FaceTrackingController {
         if tickCount % 30 == 0 {
             updateInterfaceOrientation()
         }
+        if mode == .thisPhone, tickCount % 30 == 0, arkit?.isRunning == true {
+            let fps = TrackerRate.framesPerSecond(for: ProcessInfo.processInfo.thermalState)
+            if fps != appliedTrackerRate {
+                appliedTrackerRate = fps
+                arkit?.setPreferredFrameRate(fps)
+            }
+        }
         if mode == .secondPhone, tickCount % 150 == 0 {
             addresses = LocalNetworkAddresses.current()
         }
+        fireDeferredLossHaptic(at: now)
     }
 
     private func updateState(at now: TimeInterval) {
@@ -410,11 +522,22 @@ final class FaceTrackingController {
         let wasTracking = state.isTracking
         state = newState
         if newState.isTracking, !wasTracking {
-            Haptics.success()
+            lostSince = nil
+            didWarnForThisLoss = false
+            if !UIAccessibility.isReduceMotionEnabled { Haptics.success() }
         } else if newState == .lost, wasTracking {
-            Haptics.warning()
+            lostSince = FaceClock.now()
+            didWarnForThisLoss = false
             if calibrator.isRunning { cancelCalibration() }
         }
+    }
+
+    /// A brief dropout is bridged by the idle blend. The warning waits.
+    private func fireDeferredLossHaptic(at now: TimeInterval) {
+        guard state == .lost, !didWarnForThisLoss, let lostSince else { return }
+        guard now - lostSince >= Self.lostHapticDelay else { return }
+        didWarnForThisLoss = true
+        if !UIAccessibility.isReduceMotionEnabled { Haptics.warning() }
     }
 
     // MARK: - Orientation

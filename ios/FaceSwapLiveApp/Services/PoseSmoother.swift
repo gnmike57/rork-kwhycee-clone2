@@ -16,7 +16,13 @@ nonisolated struct PoseSmoother: Sendable {
     mutating func smooth(_ pose: FacePose) -> FacePose {
         var values = [Float](repeating: 0, count: FaceChannel.count)
         for index in 0..<FaceChannel.count {
-            values[index] = Float(filters[index].filter(Double(pose.values[index]), at: pose.timestamp))
+            let raw = Double(pose.values[index])
+            let channel = FaceChannel(rawValue: index)
+            if let channel, FaceChannel.blinkChannels.contains(channel), raw >= 0.85 || raw <= 0.12 {
+                values[index] = Float(filters[index].snap(to: raw, at: pose.timestamp))
+            } else {
+                values[index] = Float(filters[index].filter(raw, at: pose.timestamp))
+            }
         }
         return FacePose(values: values, timestamp: pose.timestamp, hasFace: pose.hasFace)
     }

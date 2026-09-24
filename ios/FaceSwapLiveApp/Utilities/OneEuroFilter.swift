@@ -55,6 +55,15 @@ nonisolated struct OneEuroFilter: Sendable, Equatable {
         return filtered
     }
 
+    /// Writes a sample through with no smoothing. Used when a blink has
+    /// already arrived at fully closed or fully open, so the tail doesn't stick.
+    mutating func snap(to value: Double, at time: TimeInterval) -> Double {
+        lastValue = value
+        lastDerivative = 0
+        lastTime = time
+        return value
+    }
+
     /// Forgets history; the next sample passes straight through.
     mutating func reset() {
         lastValue = nil

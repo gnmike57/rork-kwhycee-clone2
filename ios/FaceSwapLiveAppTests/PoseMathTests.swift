@@ -192,7 +192,7 @@ struct PoseMathTests {
         #expect(differs, "a different seed should blink at different times")
     }
 
-    @Test func idleBlinksEveryThreeToSevenSecondsAndStaysInRange() {
+    @Test func idleBlinksIrregularlyAndStaysInRange() {
         var idle = IdlePoseGenerator(seed: 7, startingAt: 0)
         var onsets: [TimeInterval] = []
         var wasClosed = false
@@ -203,19 +203,35 @@ struct PoseMathTests {
                 #expect(pose[channel] >= 0 && pose[channel] <= 1)
             }
             #expect(pose[.eyeBlinkLeft] == pose[.eyeBlinkRight])
-            #expect(abs(pose[.headPitch]) <= IdlePoseGenerator.breathPitch + 1e-6)
-            #expect(abs(pose[.headYaw]) <= IdlePoseGenerator.swayYaw + 1e-6)
+            #expect(pose[.headPitch] == 0)
+            #expect(pose[.headYaw] == 0)
+            #expect(pose[.headRoll] == 0)
+            #expect(pose[.jawOpen] <= IdlePoseGenerator.breathCeiling)
+            #expect(pose[.noseSneerLeft] <= IdlePoseGenerator.breathCeiling)
 
             let closed = pose[.eyeBlinkLeft] > 0.5
             if closed, !wasClosed { onsets.append(t) }
             wasClosed = closed
         }
 
-        #expect(onsets.count >= 40, "five minutes should hold at least 40 blinks, got \(onsets.count)")
-        for (earlier, later) in zip(onsets, onsets.dropFirst()) {
-            let gap = later - earlier
-            #expect(gap >= 3 - 0.05 && gap <= 7 + 0.05, "blink gap \(gap) outside 3…7 s")
+        #expect(onsets.count >= 30, "five minutes should hold at least 30 blinks, got \(onsets.count)")
+        let gaps = zip(onsets, onsets.dropFirst()).map { $1 - $0 }
+        guard let shortest = gaps.min(), let longest = gaps.max(), !gaps.isEmpty else {
+            Issue.record("expected blink gaps")
+            return
         }
+        let average = gaps.reduce(0, +) / Double(gaps.count)
+        #expect(average > 2.5 && average < 8, "blinks should average about 5 s, got \(average)")
+        #expect(gaps.contains { $0 < 1 }, "a rare double blink should land inside five minutes")
+        #expect(longest - shortest > 1, "blinks should not be a fixed interval")
+        _ = shortest
+    }
+
+    @Test func reduceMotionIdleIsATrueStill() {
+        var idle = IdlePoseGenerator(seed: 3, startingAt: 0)
+        let pose = idle.pose(at: 12, reducedMotion: true)
+        #expect(pose.values.allSatisfy { $0 == 0 })
+        #expect(!pose.hasFace)
     }
 
     // MARK: - Mixer

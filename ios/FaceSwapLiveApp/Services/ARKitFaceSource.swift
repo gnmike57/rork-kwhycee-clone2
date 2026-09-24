@@ -20,6 +20,7 @@ final class ARKitFaceSource {
     private let sink: AsyncStream<FaceSourceEvent>.Continuation
     private let queue = DispatchQueue(label: "com.app.facetracking.arkit", qos: .userInteractive)
     private(set) var isRunning = false
+    private var appliedRate = 0
 
     init() {
         let (stream, continuation) = AsyncStream<FaceSourceEvent>.makeStream(bufferingPolicy: .bufferingNewest(8))
@@ -43,19 +44,43 @@ final class ARKitFaceSource {
         }
         guard !Task.isCancelled else { return }
 
-        let configuration = ARFaceTrackingConfiguration()
-        configuration.isLightEstimationEnabled = false
-        configuration.maximumNumberOfTrackedFaces = 1
+        appliedRate = TrackerRate.framesPerSecond(for: ProcessInfo.processInfo.thermalState)
         relay.sessionRestarted()
-        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        session.run(makeConfiguration(rate: appliedRate), options: [.resetTracking, .removeExistingAnchors])
         isRunning = true
     }
 
-    /// Releases the camera immediately.
+    /// Releases the camera immediately, before anything else may open it.
     func stop() {
         guard isRunning else { return }
         session.pause()
         isRunning = false
+        appliedRate = 0
+    }
+
+    /// Steps the tracker between 60 and 30 without resetting the face.
+    func setPreferredFrameRate(_ fps: Int) {
+        guard isRunning, fps != appliedRate else { return }
+        appliedRate = fps
+        session.run(makeConfiguration(rate: fps))
+    }
+
+    private func makeConfiguration(rate: Int) -> ARFaceTrackingConfiguration {
+        let configuration = ARFaceTrackingConfiguration()
+        configuration.isLightEstimationEnabled = false
+        configuration.maximumNumberOfTrackedFaces = 1
+        if let format = Self.videoFormat(preferring: rate) {
+            configuration.videoFormat = format
+        }
+        return configuration
+    }
+
+    private static func videoFormat(preferring fps: Int) -> ARConfiguration.VideoFormat? {
+        let formats = ARFaceTrackingConfiguration.supportedVideoFormats
+        guard let index = TrackerRate.indexPreferring(fps, among: formats.map(\.framesPerSecond)) else {
+            return nil
+        }
+        return formats[index]
     }
 
     func setInterfaceOrientation(_ orientation: UIInterfaceOrientation) {

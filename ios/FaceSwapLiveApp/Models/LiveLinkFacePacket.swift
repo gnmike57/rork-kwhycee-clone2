@@ -34,6 +34,7 @@ nonisolated struct LiveLinkFacePacket: Sendable, Equatable {
         case badStringLength(Int32)
         case badChannelCount(UInt8)
         case nonFiniteValue
+        case unrecognizedLayout
     }
 
     init(
@@ -56,17 +57,55 @@ nonisolated struct LiveLinkFacePacket: Sendable, Equatable {
 
     // MARK: - Decoding
 
-    /// Parses a datagram. Anything short, from another version, or carrying an
-    /// impossible length, count or value is rejected rather than guessed at.
+    /// Parses a datagram. Layout B (length-prefixed device ID, what Live Link
+    /// Face sends today) is tried first. If that fails and the bytes look like
+    /// the older fixed 36-character device ID, layout A is tried. Anything
+    /// short, from another version, or carrying an impossible length, count or
+    /// value is rejected rather than guessed at.
     static func decode(_ data: Data) throws -> LiveLinkFacePacket {
-        var reader = ByteReader(bytes: [UInt8](data))
-
-        guard let version = reader.readUInt8() else { throw DecodeError.tooShort }
+        guard let version = data.first else { throw DecodeError.tooShort }
         guard version == supportedVersion else { throw DecodeError.unsupportedVersion(version) }
+
+        do {
+            return try decodeLayoutB(data)
+        } catch let layoutBError as DecodeError {
+            if let packet = try? decodeLayoutA(data) {
+                return packet
+            }
+            if case .badStringLength = layoutBError, looksLikeLayoutAPrefix(data) {
+                throw DecodeError.unrecognizedLayout
+            }
+            throw layoutBError
+        }
+    }
+
+    /// Length-prefixed device ID, then subject, frame time, count and values.
+    private static func decodeLayoutB(_ data: Data) throws -> LiveLinkFacePacket {
+        var reader = ByteReader(bytes: [UInt8](data))
+        guard reader.readUInt8() != nil else { throw DecodeError.tooShort }
 
         let deviceID = try readString(&reader)
         let subjectName = try readString(&reader)
+        return try readFrame(deviceID: deviceID, subjectName: subjectName, reader: &reader)
+    }
 
+    /// Older published layout: a fixed 36-character device ID, no length prefix.
+    private static func decodeLayoutA(_ data: Data) throws -> LiveLinkFacePacket {
+        var reader = ByteReader(bytes: [UInt8](data))
+        guard reader.readUInt8() != nil else { throw DecodeError.tooShort }
+        guard let uuidBytes = reader.readBytes(36), isUUID(uuidBytes) else {
+            throw DecodeError.unrecognizedLayout
+        }
+        let deviceID = String(decoding: uuidBytes, as: UTF8.self)
+        let subjectName = try readString(&reader)
+        return try readFrame(deviceID: deviceID, subjectName: subjectName, reader: &reader)
+    }
+
+    private static func readFrame(
+        deviceID: String,
+        subjectName: String,
+        reader: inout ByteReader
+    ) throws -> LiveLinkFacePacket {
         guard let frameNumber = reader.readInt32(),
               let subFrame = reader.readFloat(),
               let numerator = reader.readInt32(),
@@ -93,6 +132,33 @@ nonisolated struct LiveLinkFacePacket: Sendable, Equatable {
             frameRateDenominator: denominator,
             values: values
         )
+    }
+
+    /// True when the bytes after the version look like a 36-character device ID.
+    private static func looksLikeLayoutAPrefix(_ data: Data) -> Bool {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 37 else { return false }
+        return isUUID(Array(bytes[1..<37]))
+    }
+
+    private static func isUUID(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == 36 else { return false }
+        let dashIndexes: Set<Int> = [8, 13, 18, 23]
+        for index in bytes.indices {
+            let byte = bytes[index]
+            if dashIndexes.contains(index) {
+                if byte != UInt8(ascii: "-") { return false }
+            } else if !isHex(byte) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func isHex(_ byte: UInt8) -> Bool {
+        (byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9"))
+            || (byte >= UInt8(ascii: "a") && byte <= UInt8(ascii: "f"))
+            || (byte >= UInt8(ascii: "A") && byte <= UInt8(ascii: "F"))
     }
 
     private static func readString(_ reader: inout ByteReader) throws -> String {
@@ -137,6 +203,22 @@ nonisolated struct LiveLinkFacePacket: Sendable, Equatable {
     /// True unless every channel is exactly zero, which is what the sender
     /// streams while no face is in front of it.
     var describesFace: Bool { values.contains { $0 != 0 } }
+
+    /// False when Stream Head Rotation is off: those three angles arrive as
+    /// exact zeros, which is not the same as a face looking straight ahead.
+    var includesHeadPose: Bool {
+        FaceChannel.headChannels.contains { values[$0.rawValue] != 0 }
+    }
+
+    /// Sender frame time in seconds, when the packet carries a usable rate.
+    var qualifiedSeconds: TimeInterval? {
+        guard frameRateDenominator > 0, frameRateNumerator > 0 else { return nil }
+        let fps = Double(frameRateNumerator) / Double(frameRateDenominator)
+        guard fps > 0, fps.isFinite else { return nil }
+        let seconds = (Double(frameNumber) + Double(subFrame)) / fps
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        return seconds
+    }
 
     /// The packet as a pose in the app's convention.
     ///

@@ -1,14 +1,6 @@
-//
-//  FaceSwapLiveAppUITestsLaunchTests.swift
-//  FaceSwapLiveAppUITests
-//
-//  Created by Rork on February 22, 2026.
-//
-
 import XCTest
 
 final class FaceSwapLiveAppUITestsLaunchTests: XCTestCase {
-
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true
     }
@@ -18,12 +10,19 @@ final class FaceSwapLiveAppUITestsLaunchTests: XCTestCase {
     }
 
     @MainActor
-    func testLaunch() throws {
+    func testLaunchReachesTheFirstScreen() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
+        let profiles = app.descendants(matching: .any)["device-profiles"]
+        let main = app.descendants(matching: .any)["main-app"]
+        let title = app.staticTexts["Device Profiles"]
+        let reachedProfiles = profiles.waitForExistence(timeout: 12) || title.waitForExistence(timeout: 2)
+        let reachedMain = main.waitForExistence(timeout: 2)
+        XCTAssertTrue(
+            reachedProfiles || reachedMain,
+            "Launch should reach Device Profiles or the main app, not a blank window"
+        )
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Launch Screen"

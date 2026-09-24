@@ -58,7 +58,7 @@ nonisolated final class ARKitFaceRelay: NSObject, ARSessionDelegate, Sendable {
         }
 
         let pose = Self.pose(from: face, camera: frame.camera, orientation: orientation)
-        sink.yield(.pose(pose, sender: nil))
+        sink.yield(.pose(pose, sender: nil, senderTime: nil))
     }
 
     func sessionWasInterrupted(_ session: ARSession) {

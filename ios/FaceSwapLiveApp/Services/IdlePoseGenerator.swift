@@ -1,10 +1,15 @@
 import Foundation
 
-/// The face's resting life: a blink every 3–7 seconds, a slow breath and a
-/// barely-there head sway. Fully determined by its seed and the times it is
-/// asked about, so two generators with the same seed draw the same thing.
+/// The face's resting life: irregular blinks averaging about 5 seconds, a rare
+/// double blink, tiny eye flicks, and a breath under 1% on the jaw and nose.
+///
+/// Head sway stays off unless a later stage says the photo is already tilted.
+/// Fully determined by its seed and the times it is asked about.
 nonisolated struct IdlePoseGenerator: Sendable, Equatable {
-    static let blinkInterval: ClosedRange<TimeInterval> = 3...7
+    static let blinkMean: TimeInterval = 5
+    static let blinkMinimum: TimeInterval = 1.2
+    static let doubleBlinkChance: Double = 0.1
+    static let doubleBlinkGap: TimeInterval = 0.18
 
     /// Lids close, hold, then open — about a quarter of a second in all.
     static let blinkClose: TimeInterval = 0.08
@@ -12,31 +17,44 @@ nonisolated struct IdlePoseGenerator: Sendable, Equatable {
     static let blinkOpen: TimeInterval = 0.16
     static var blinkDuration: TimeInterval { blinkClose + blinkHold + blinkOpen }
 
-    /// Breath and sway amplitudes, in radians.
-    static let breathPitch: Float = 0.012
-    static let swayYaw: Float = 0.015
-    static let swayRoll: Float = 0.006
-    static let eyeDrift: Float = 0.03
+    /// Breath stays under 1% and never moves the head.
+    static let breathCeiling: Float = 0.009
+    static let flickAmplitude: Float = 0.035
+    static let swayYaw: Float = 0.008
 
-    /// Time zero for the breath and sway curves.
+    /// Time zero for the breath curve.
     let origin: TimeInterval
+
+    /// Straight-on photos stay still in the head. A tilted photo may sway a little.
+    var allowsHeadSway = false
 
     private var random: SplitMix64
     private var currentBlinkStart: TimeInterval?
     private var nextBlinkStart: TimeInterval
+    private var nextFlickStart: TimeInterval
+    private var flickEnd: TimeInterval = -.greatestFiniteMagnitude
+    private var flickYaw: Float = 0
+    private var flickPitch: Float = 0
 
     init(seed: UInt64, startingAt origin: TimeInterval) {
         self.origin = origin
         var random = SplitMix64(seed: seed)
-        // The first blink arrives sooner than a full interval so a freshly
-        // idle face does not stare for seven seconds.
-        nextBlinkStart = origin + random.nextDouble(in: 1...3)
+        nextBlinkStart = origin + random.exponential(mean: Self.blinkMean, minimum: 0.8)
+        nextFlickStart = origin + random.exponential(mean: 2.4, minimum: 0.5)
         self.random = random
     }
 
     /// The idle pose at `time`. Times must not go backwards.
-    mutating func pose(at time: TimeInterval) -> FacePose {
+    /// Reduce Motion returns a true still.
+    mutating func pose(at time: TimeInterval, reducedMotion: Bool = false) -> FacePose {
+        if reducedMotion {
+            var still = FacePose.neutral
+            still.timestamp = time
+            return still
+        }
+
         advanceBlinks(to: time)
+        advanceFlicks(to: time)
 
         var pose = FacePose.neutral
         pose.timestamp = time
@@ -47,13 +65,23 @@ nonisolated struct IdlePoseGenerator: Sendable, Equatable {
         pose[.eyeBlinkRight] = blink
 
         let t = time - origin
-        pose[.headPitch] = Self.breathPitch * Float(sin(2 * .pi * 0.22 * t))
-        pose[.headYaw] = Self.swayYaw * Float(sin(2 * .pi * 0.09 * t + 1.1))
-        pose[.headRoll] = Self.swayRoll * Float(sin(2 * .pi * 0.13 * t + 2.3))
+        let wave = Float(sin(2 * .pi * 0.16 * t))
+        let slow = Float(sin(2 * .pi * 0.07 * t + 1.3))
+        let breath = min(max(0, 0.006 * wave + 0.002 * slow), Self.breathCeiling)
+        pose[.jawOpen] = breath
+        pose[.noseSneerLeft] = breath * 0.5
+        pose[.noseSneerRight] = breath * 0.5
 
-        let drift = Self.eyeDrift * Float(sin(2 * .pi * 0.07 * t + 0.6))
-        pose[.leftEyeYaw] = drift
-        pose[.rightEyeYaw] = drift
+        if time < flickEnd {
+            pose[.leftEyeYaw] = flickYaw
+            pose[.rightEyeYaw] = flickYaw
+            pose[.leftEyePitch] = flickPitch
+            pose[.rightEyePitch] = flickPitch
+        }
+
+        if allowsHeadSway {
+            pose[.headYaw] = Self.swayYaw * Float(sin(2 * .pi * 0.05 * t + 0.4))
+        }
 
         return pose
     }
@@ -61,7 +89,20 @@ nonisolated struct IdlePoseGenerator: Sendable, Equatable {
     private mutating func advanceBlinks(to time: TimeInterval) {
         while time >= nextBlinkStart {
             currentBlinkStart = nextBlinkStart
-            nextBlinkStart += random.nextDouble(in: Self.blinkInterval)
+            let isDouble = random.nextDouble(in: 0...1) < Self.doubleBlinkChance
+            let gap = isDouble
+                ? Self.doubleBlinkGap
+                : random.exponential(mean: Self.blinkMean, minimum: Self.blinkMinimum)
+            nextBlinkStart += Self.blinkDuration + gap
+        }
+    }
+
+    private mutating func advanceFlicks(to time: TimeInterval) {
+        while time >= nextFlickStart {
+            flickYaw = Float(random.nextDouble(in: -1...1)) * Self.flickAmplitude
+            flickPitch = Float(random.nextDouble(in: -0.4...0.4)) * Self.flickAmplitude
+            flickEnd = nextFlickStart + 0.12
+            nextFlickStart = flickEnd + random.exponential(mean: 2.4, minimum: 0.6)
         }
     }
 
@@ -105,6 +146,12 @@ nonisolated struct IdlePoseGenerator: Sendable, Equatable {
         mutating func nextDouble(in range: ClosedRange<Double>) -> Double {
             let unit = Double(next() >> 11) / Double(1 << 53)
             return range.lowerBound + (range.upperBound - range.lowerBound) * unit
+        }
+
+        /// Delayed exponential: never shorter than `minimum`, averaging about `mean`.
+        mutating func exponential(mean: Double, minimum: Double) -> Double {
+            let unit = nextDouble(in: 0.000_001...0.999_999)
+            return max(-mean * log(1 - unit), minimum)
         }
     }
 }

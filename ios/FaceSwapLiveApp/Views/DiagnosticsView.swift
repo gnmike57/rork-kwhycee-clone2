@@ -19,7 +19,9 @@ struct DiagnosticsView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     sessionDiagnosticsSection
-                    faceTrackingSection
+                    if LivingStills.isAvailable {
+                        faceTrackingSection
+                    }
                     cameraComparisonSection
                     fingerprintSection
                     metadataInspectorSection

@@ -42,6 +42,7 @@ struct ProfileSelectionView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .accessibilityIdentifier("device-profiles")
     }
 
     private var headerSection: some View {

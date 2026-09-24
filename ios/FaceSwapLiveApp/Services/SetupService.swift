@@ -147,9 +147,17 @@ final class SetupService {
         }
     }
 
+    /// The window's own screen. `UIScreen.main` is the old accessor and is
+    /// not used; setup always runs from a visible scene.
+    private func currentScreen() -> UIScreen? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let active = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        return active?.screen
+    }
+
     private func gatherHardwareSpec() -> DeviceHardwareSpec {
         let device = UIDevice.current
-        let screen = UIScreen.main
+        let screen = currentScreen()
         let processInfo = ProcessInfo.processInfo
 
         var systemInfo = utsname()
@@ -167,9 +175,9 @@ final class SetupService {
             systemVersion: device.systemVersion,
             processorCount: processInfo.processorCount,
             physicalMemoryGB: Double(processInfo.physicalMemory) / (1024 * 1024 * 1024),
-            screenNativeBounds: "\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height))",
-            screenScale: screen.scale,
-            screenNativeScale: screen.nativeScale,
+            screenNativeBounds: screen.map { "\(Int($0.nativeBounds.width))x\(Int($0.nativeBounds.height))" } ?? "0x0",
+            screenScale: screen.map { Double($0.scale) } ?? 1,
+            screenNativeScale: screen.map { Double($0.nativeScale) } ?? 1,
             identifierForVendor: device.identifierForVendor?.uuidString
         )
     }
@@ -292,7 +300,7 @@ final class SetupService {
         case .P3_D65: colorSpace = "P3_D65"
         case .HLG_BT2020: colorSpace = "HLG_BT2020"
         case .appleLog: colorSpace = "AppleLog"
-        @unknown default: colorSpace = "unknown"
+        default: colorSpace = "unknown"
         }
 
         let exposureSecs = CMTimeGetSeconds(device.exposureDuration)

@@ -2,8 +2,9 @@ import Foundation
 import Network
 
 /// Listens for Live Link Face packets from a second iPhone and turns each
-/// valid one into a pose. Purely receiving — nothing is ever sent back, so
-/// no local-network permission is asked for on this phone.
+/// valid one into a pose. No face data is ever sent. A short local lookup
+/// runs while listening so iOS will actually deliver the incoming packets;
+/// that lookup is what can show the Local Network prompt on this phone.
 ///
 /// Every Network-framework call runs on this actor's own serial queue, which
 /// is also the queue the listener and its flows call back on.
@@ -19,6 +20,7 @@ actor LiveLinkListener {
 
     private var listener: NWListener?
     private var flows: [ObjectIdentifier: NWConnection] = [:]
+    private var permissionBrowser: NWBrowser?
     private var port: UInt16 = LiveLinkFacePacket.defaultPort
 
     init() {
@@ -60,10 +62,14 @@ actor LiveLinkListener {
 
         listener = newListener
         newListener.start(queue: queue)
+        primeLocalNetworkPermission()
     }
 
-    /// Closes the port and every sender flow.
+    /// Closes the port, the permission lookup and every sender flow.
     func stop() {
+        permissionBrowser?.stateUpdateHandler = nil
+        permissionBrowser?.cancel()
+        permissionBrowser = nil
         listener?.stateUpdateHandler = nil
         listener?.newConnectionHandler = nil
         listener?.cancel()
@@ -128,8 +134,16 @@ actor LiveLinkListener {
     }
 
     private func received(_ data: Data?, error: NWError?, on id: ObjectIdentifier) {
-        if let data, let packet = try? LiveLinkFacePacket.decode(data) {
-            sink.yield(.pose(packet.pose(timestamp: FaceClock.now()), sender: packet.subjectName))
+        if let data {
+            do {
+                let packet = try LiveLinkFacePacket.decode(data)
+                let pose = packet.pose(timestamp: FaceClock.now())
+                sink.yield(.pose(pose, sender: packet.subjectName, senderTime: packet.qualifiedSeconds))
+            } catch let decodeError as LiveLinkFacePacket.DecodeError {
+                sink.yield(.packetRejected(PacketRejection(decodeError)))
+            } catch {
+                sink.yield(.packetRejected(.unrecognizedLayout))
+            }
         }
         if error != nil {
             drop(id)
@@ -142,5 +156,20 @@ actor LiveLinkListener {
         guard let flow = flows.removeValue(forKey: id) else { return }
         flow.stateUpdateHandler = nil
         flow.cancel()
+    }
+
+    /// A Bonjour browse is the documented way to surface the Local Network
+    /// prompt. It does not send a face packet, and Live Link Face cannot
+    /// discover this phone through it — the address is still typed in there.
+    private func primeLocalNetworkPermission() {
+        let parameters = NWParameters()
+        parameters.includePeerToPeer = true
+        let browser = NWBrowser(
+            for: .bonjour(type: "_facelive-listen._udp", domain: nil),
+            using: parameters
+        )
+        browser.stateUpdateHandler = { _ in }
+        browser.start(queue: queue)
+        permissionBrowser = browser
     }
 }

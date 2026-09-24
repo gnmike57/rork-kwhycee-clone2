@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 
 struct LivePreviewView: View {
+    @Environment(FaceTrackingController.self) private var faceTracking
     @State private var viewModel = PreviewViewModel()
 
     var body: some View {
@@ -54,10 +55,15 @@ struct LivePreviewView: View {
             Text("No face was found in the selected photo. Please try a different photo with a clear, front-facing face.")
         }
         .onAppear {
+            _ = faceTracking.beginPreviewCameraUse()
             viewModel.startCapture()
         }
         .onDisappear {
-            viewModel.stopCapture()
+            let hold = faceTracking.previewCameraHold
+            Task {
+                await viewModel.stopCaptureAndWait()
+                faceTracking.endPreviewCameraUse(hold: hold)
+            }
         }
     }
 
