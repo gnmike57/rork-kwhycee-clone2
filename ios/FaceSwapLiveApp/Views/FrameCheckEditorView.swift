@@ -71,6 +71,9 @@ struct FrameCheckEditorView: View {
                         truePixels: truePixels,
                         onExpandWithAI: { startExpand() }
                     )
+                    if LivingStills.isAvailable, let preview = viewModel.livingPreview {
+                        LivingStillPreview(image: preview)
+                    }
                     toolsRow
                     faceStatus
                     facePointsChip

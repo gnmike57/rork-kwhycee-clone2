@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var videoLibrary = VideoLibraryService()
     @State private var browserViewModel = BrowserViewModel()
     @State private var faceTracking = FaceTrackingController()
+    @State private var livingStill = LivingStillDriver()
     @State private var hasSelectedProfile: Bool = false
     @State private var selectedTab: AppTab = .browser
 
@@ -75,6 +76,9 @@ struct ContentView: View {
         // is on screen and the Preview tab is not holding the camera.
         .onChange(of: browserViewModel.stillOnActiveFeed, initial: true) { _, isStill in
             faceTracking.stillOnActiveFeed = isStill
+        }
+        .onAppear {
+            livingStill.start(viewModel: browserViewModel, tracking: faceTracking)
         }
         .onChange(of: selectedTab, initial: true) { _, tab in
             faceTracking.setPreviewTabSelected(tab == .preview)

@@ -161,6 +161,12 @@ final class BrowserViewModel {
 
     /// Full-screen editor request; presented once at the app root.
     var frameCheckRequest: FrameCheckRequest?
+    /// A still the page is already drawing, read without new page names.
+    var livingFeed: LivingFeedSignal?
+    /// The living-still preview. Nil when tracking is off or strength is 0.
+    var livingPreview: UIImage?
+    /// Bumps when the page rebuilds the still, so the warp can reattach.
+    var mediaGeneration: Int = 0
     /// Set when Media Controls should hand over to the editor as it closes.
     var frameCheckAfterDismiss: FrameCheckRequest?
     /// Faces and import originals, remembered per still.
@@ -1149,9 +1155,11 @@ final class BrowserViewModel {
                 case "live":
                     // The page keeps its own queue pointer, so read the frame
                     // back in case the rebuild changed what is being drawn into.
+                    self.mediaGeneration += 1
                     self.refreshLiveFrameSize()
                     self.markReinjected("Feed re-sent")
                 case "cleared":
+                    self.mediaGeneration += 1
                     self.refreshLiveFrameSize()
                     self.markReinjected("Cleared a stuck change")
                 default:
