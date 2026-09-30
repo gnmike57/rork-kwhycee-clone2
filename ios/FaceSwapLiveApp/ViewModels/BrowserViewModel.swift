@@ -61,8 +61,10 @@ final class BrowserViewModel {
     /// Drops the `files` fallback and stops replacing built-in input methods.
     var accessorHardening: Bool = false
 
-    /// Reports remaining wrappers as built-in code. Itself detectable, hence opt-in.
-    var maskWrappersAsNative: Bool = false
+    /// Reports remaining wrappers as built-in code. The disguise is shared
+    /// across same-origin frames and installs before page code runs, so it is
+    /// the shipped default; turn it off only to debug a hook's real source.
+    var maskWrappersAsNative: Bool = true
 
     /// Transient note shown after a change that needed a page reload.
     var stealthNotice: String?

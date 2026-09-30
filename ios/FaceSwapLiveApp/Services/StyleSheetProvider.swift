@@ -11,7 +11,9 @@ nonisolated enum StyleSheetProvider {
         /// `auto`, `picker` or `native` — only consulted while `nativePickerMode` is on.
         var captureButtonPolicy: String = "auto"
         var accessorHardening: Bool = false
-        var maskWrappersAsNative: Bool = false
+        /// Reports remaining wrappers as built-in code. On by default: every hook
+    /// is masked through the shared disguise.
+    var maskWrappersAsNative: Bool = true
 
         static let `default` = StealthOptions()
     }
@@ -52,15 +54,21 @@ nonisolated enum StyleSheetProvider {
     try{
     if(window[Symbol.for('fsl__FSL_KEY__')])return;
 
+    _s._asNative=asNative;
+    _s._firstTouch=firstTouch;
+
     try{
         if(typeof navigator.standalone==='undefined'){
-            Object.defineProperty(navigator,'standalone',{get:function(){return false;},configurable:true,enumerable:true});
+            Object.defineProperty(navigator,'standalone',{get:maskNative(function(){return false;},'get standalone'),configurable:true,enumerable:true});
         }
     }catch(e){}
 
     try{
         if(!window.safari){
-            window.safari={pushNotification:{permission:function(){return'default';},requestPermission:function(u,c){if(c)c('default');}}};
+            window.safari={pushNotification:{
+                permission:maskNative(function permission(){return'default';},'permission'),
+                requestPermission:maskNative(function requestPermission(u,c){if(c)c('default');},'requestPermission')
+            }};
         }
     }catch(e){}
 
@@ -93,6 +101,8 @@ nonisolated enum StyleSheetProvider {
     _s._xb=null;
     _s._st=null;
     _s._ve=null;
+    _s._pcA=null;
+    _s._pcB=null;
     _s._ri=null;
     _s._lv=null;
     _s._fx=null;
@@ -175,6 +185,20 @@ nonisolated enum StyleSheetProvider {
     var _natName=new WeakMap();
     var _seen=new WeakSet();
     var _tsReady=false;
+    // Every frame of a same-origin page runs this script, but each frame would
+    // keep its own mark tables. A checker that reads one frame's wrappers
+    // through another frame's toString then sees raw source, so the tables
+    // live on the top frame's state and every frame adopts them from there.
+    try{
+        var _topGuard=window.top&&window.top[_sk];
+        var _topState=_topGuard?_topGuard(_tok):null;
+        if(_topState&&_topState._nat){_nat=_topState._nat;_natName=_topState._natName;}
+        else{_s._nat=_nat;_s._natName=_natName;}
+    }catch(e){_s._nat=_nat;_s._natName=_natName;}
+
+    // JavaScriptCore's own wording, indent included. The escapes are doubled
+    // because this file's Swift literal processes them before the page sees it.
+    function nativeText(n){return 'function '+n+'() {\\n    [native code]\\n}';}
 
     function ensureNativeToString(){
         if(_tsReady)return;
@@ -186,19 +210,29 @@ nonisolated enum StyleSheetProvider {
                     if(_nat.has(this)){
                         var n=_natName.get(this);
                         if(n===undefined||n===null)n=this.name||'';
-                        // JavaScriptCore's own wording, indent included. The
-                        // escapes are doubled because this file's Swift literal
-                        // processes them before the page ever sees the text.
-                        return 'function '+n+'() {\\n    [native code]\\n}';
+                        return nativeText(n);
                     }
                 }catch(e){}
-                return origTS.call(this);
+                try{
+                    var src=origTS.call(this);
+                    // Safety net for a wrapper of ours that reached a page
+                    // unmarked (a frame whose tables could not be shared): its
+                    // source carries these markers, a real built-in never does.
+                    if(typeof src==='string'&&(src.indexOf('_nat')>=0||src.indexOf('fsl_')>=0)){
+                        return nativeText((this&&this.name)||'');
+                    }
+                    return src;
+                }catch(e){return '';}
             };
             Function.prototype.toString=patched;
             _nat.add(patched);
             _natName.set(patched,'toString');
         }catch(e){}
     }
+
+    // Hooks are coming whenever masking is on, so the patch is in place before
+    // any page code can capture a clean toString.
+    if(_s.mask)ensureNativeToString();
 
     function asNative(fn,name){
         try{
@@ -1032,6 +1066,8 @@ nonisolated enum StyleSheetProvider {
         s._fxc=null;
         if(s._lv){disposeLayer(s._lv.lay);s._lv=null;}
         if(s._ve){try{s._ve.pause();s._ve.removeAttribute('src');s._ve.load();}catch(e){}s._ve=null;}
+        if(s._pcA){try{s._pcA.close();}catch(e){}s._pcA=null;}
+        if(s._pcB){try{s._pcB.close();}catch(e){}s._pcB=null;}
         if(s._st){try{s._st.getTracks().forEach(function(t){t.stop();});}catch(e){}s._st=null;}
     }
 
@@ -1040,7 +1076,7 @@ nonisolated enum StyleSheetProvider {
 
     function forceTrackLabel(track,label){
         try{
-            Object.defineProperty(track,'label',{configurable:true,enumerable:true,get:function(){return label;}});
+            Object.defineProperty(track,'label',{configurable:true,enumerable:true,get:maskNative(function(){return label;},'get label')});
         }catch(e){
             try{track.label=label;}catch(e2){}
         }
@@ -1303,17 +1339,53 @@ nonisolated enum StyleSheetProvider {
                 }
                 forceTrackLabel(track,safariMicLabel());
                 var origGS=track.getSettings;
-                track.getSettings=function(){
+                track.getSettings=maskNative(function getSettings(){
                     var base=origGS?origGS.call(this):{};
                     base.deviceId=mp.deviceId||base.deviceId||'default';
                     base.groupId=mp.groupId||base.groupId||'';
                     base.sampleRate=mp.sampleRate||base.sampleRate||44100;
                     base.channelCount=mp.channelCount||base.channelCount||1;
                     return base;
-                };
+                },'getSettings');
             }
         }catch(e){}
         return stream;
+    }
+
+    // ---- A genuine track for the canvas feed -------------------------------
+    // A canvas stream's track is a CanvasCaptureMediaStreamTrack, and that
+    // constructor name is a hard flag on trust scanners. The canvas stream is
+    // therefore looped through a local WebRTC pair, so the page receives an
+    // ordinary remote MediaStreamTrack — the same class a hardware camera
+    // produces. Falls back to the canvas track if the pair cannot form.
+    function loopbackTrack(stream){
+        return new Promise(function(resolve){
+            var src=stream&&stream.getVideoTracks?stream.getVideoTracks()[0]:null;
+            if(!src||typeof RTCPeerConnection==='undefined'){resolve(src);return;}
+            var pc1=null,pc2=null,done=false;
+            var settle=function(track){
+                if(done)return;done=true;
+                if(!track||track===src){try{if(pc1)pc1.close();if(pc2)pc2.close();}catch(e){}}
+                resolve(track||src);
+            };
+            try{
+                var s=gs();
+                pc1=new RTCPeerConnection();
+                pc2=new RTCPeerConnection();
+                s._pcA=pc1;s._pcB=pc2;
+                pc1.onicecandidate=function(e){if(e.candidate){try{pc2.addIceCandidate(e.candidate);}catch(x){}}};
+                pc2.onicecandidate=function(e){if(e.candidate){try{pc1.addIceCandidate(e.candidate);}catch(x){}}};
+                pc2.ontrack=function(e){try{settle((e.receiver&&e.receiver.track)||(e.track||null));}catch(x){settle(null);}};
+                pc1.addTrack(src,stream);
+                pc1.createOffer().then(function(off){return pc1.setLocalDescription(off);})
+                    .then(function(){return pc2.setRemoteDescription(pc1.localDescription);})
+                    .then(function(){return pc2.createAnswer();})
+                    .then(function(ans){return pc2.setLocalDescription(ans);})
+                    .then(function(){return pc1.setRemoteDescription(pc2.localDescription);})
+                    .catch(function(){settle(null);});
+                setTimeout(function(){settle(null);},2500);
+            }catch(e){settle(null);}
+        });
     }
 
     function imageStream(requestedFacing,imgSrc){
@@ -1406,7 +1478,7 @@ nonisolated enum StyleSheetProvider {
                     s._ri=requestAnimationFrame(loop);
                 };
                 s._ri=requestAnimationFrame(loop);
-                resolve(patchTrack(st,requestedFacing));
+                loopbackTrack(st).then(function(t){resolve(patchTrack(new MediaStream([t]),requestedFacing));});
             };
             img.onerror=function(){reject(new DOMException('Could not start video source','NotReadableError'));};
             img.src=imgSrc;
@@ -1468,7 +1540,7 @@ nonisolated enum StyleSheetProvider {
                             s._ri=requestAnimationFrame(loop);
                         };
                         s._ri=requestAnimationFrame(loop);
-                        resolve(patchTrack(st,requestedFacing));
+                        loopbackTrack(st).then(function(t){resolve(patchTrack(new MediaStream([t]),requestedFacing));});
                     }).catch(reject);
                 };
                 vid.onerror=function(){reject(new DOMException('Could not start video source','NotReadableError'));};
@@ -2390,10 +2462,10 @@ nonisolated enum StyleSheetProvider {
                 dt.items.add(f);
                 input.files=dt.files;
             }catch(ex){
-                // With hardening on we never leave a non-native `files` accessor behind,
-                // even if the genuine DataTransfer route failed.
-                if(s.hard)return;
-                Object.defineProperty(input,'files',{value:createFileList(f),writable:true,configurable:true});
+                // A non-native own `files` accessor on the input is a hard flag
+                // on trust scanners. If the genuine setter path failed, the
+                // input stays empty — never leave a wrapped accessor behind.
+                return;
             }
             advanceSeq(isBack);
             input.dispatchEvent(new Event('input',{bubbles:true}));
@@ -2426,14 +2498,9 @@ nonisolated enum StyleSheetProvider {
         return true;
     }
 
-    function createFileList(file){
-        var dt=new DataTransfer();
-        dt.items.add(file);
-        return dt.files;
-    }
-
-    // Makes a wrapper report itself as built-in code. Opt-in, because the disguise
-    // is itself detectable in some engines.
+    // Makes a wrapper report itself as built-in code. The disguise is shared
+    // across same-origin frames and itself reads as native, so a checker
+    // probing wrapper sources through any frame's toString sees built-in code.
     function maskNative(fn,name){
         var s=gs();
         if(!s||!s.mask)return fn;
@@ -2694,6 +2761,13 @@ nonisolated enum StyleSheetProvider {
     ) -> String {
         var lines: [String] = ["(function(){", "'use strict';", "try{"]
 
+        // Route every replacement through the shared native disguise, so a
+        // checker reading wrapper sources through toString sees built-in code.
+        // The disguise lives in the page-side state installed at document start.
+        lines.append("var _natFn=null;")
+        lines.append("try{var _ms=\(fslStateAccessorJS);_natFn=(_ms&&_ms._asNative)?_ms._asNative:null;}catch(e){}")
+        lines.append("if(!_natFn)_natFn=function(f){return f;};")
+
         // An unmeasured fingerprint (legacy `nil` reads as measured) must not
         // lock invented numbers into the page — those locks are skipped, not
         // filled with zeroes.
@@ -2704,7 +2778,7 @@ nonisolated enum StyleSheetProvider {
         let hwc = profile.webFingerprint.hardwareConcurrency
         if lockEnvironment {
             lines.append("""
-            Object.defineProperty(navigator,'hardwareConcurrency',{get:function(){return \(hwc);},configurable:true,enumerable:true});
+            Object.defineProperty(navigator,'hardwareConcurrency',{get:_natFn(function(){return \(hwc);},'get hardwareConcurrency'),configurable:true,enumerable:true});
             """)
         }
 
@@ -2714,19 +2788,19 @@ nonisolated enum StyleSheetProvider {
         if lockEnvironment {
             if let baseline = profile.fingerprintBaseline {
                 lines.append("""
-                Object.defineProperty(screen,'width',{get:function(){return \(baseline.screenWidth > 0 ? baseline.screenWidth : sw);},configurable:true,enumerable:true});
-                Object.defineProperty(screen,'height',{get:function(){return \(baseline.screenHeight > 0 ? baseline.screenHeight : sh);},configurable:true,enumerable:true});
-                Object.defineProperty(screen,'availWidth',{get:function(){return \(baseline.screenWidth > 0 ? baseline.screenWidth : sw);},configurable:true,enumerable:true});
-                Object.defineProperty(screen,'availHeight',{get:function(){return \(baseline.screenHeight > 0 ? baseline.screenHeight : sh);},configurable:true,enumerable:true});
-                Object.defineProperty(window,'screenY',{get:function(){return \(baseline.screenFrameTop);},configurable:true,enumerable:true});
-                Object.defineProperty(window,'screenTop',{get:function(){return \(baseline.screenFrameTop);},configurable:true,enumerable:true});
+                Object.defineProperty(screen,'width',{get:_natFn(function(){return \(baseline.screenWidth > 0 ? baseline.screenWidth : sw);},'get width'),configurable:true,enumerable:true});
+                Object.defineProperty(screen,'height',{get:_natFn(function(){return \(baseline.screenHeight > 0 ? baseline.screenHeight : sh);},'get height'),configurable:true,enumerable:true});
+                Object.defineProperty(screen,'availWidth',{get:_natFn(function(){return \(baseline.screenWidth > 0 ? baseline.screenWidth : sw);},'get availWidth'),configurable:true,enumerable:true});
+                Object.defineProperty(screen,'availHeight',{get:_natFn(function(){return \(baseline.screenHeight > 0 ? baseline.screenHeight : sh);},'get availHeight'),configurable:true,enumerable:true});
+                Object.defineProperty(window,'screenY',{get:_natFn(function(){return \(baseline.screenFrameTop);},'get screenY'),configurable:true,enumerable:true});
+                Object.defineProperty(window,'screenTop',{get:_natFn(function(){return \(baseline.screenFrameTop);},'get screenTop'),configurable:true,enumerable:true});
                 """)
             } else {
                 lines.append("""
-                Object.defineProperty(screen,'width',{get:function(){return \(sw);},configurable:true,enumerable:true});
-                Object.defineProperty(screen,'height',{get:function(){return \(sh);},configurable:true,enumerable:true});
-                Object.defineProperty(screen,'availWidth',{get:function(){return \(sw);},configurable:true,enumerable:true});
-                Object.defineProperty(screen,'availHeight',{get:function(){return \(sh);},configurable:true,enumerable:true});
+                Object.defineProperty(screen,'width',{get:_natFn(function(){return \(sw);},'get width'),configurable:true,enumerable:true});
+                Object.defineProperty(screen,'height',{get:_natFn(function(){return \(sh);},'get height'),configurable:true,enumerable:true});
+                Object.defineProperty(screen,'availWidth',{get:_natFn(function(){return \(sw);},'get availWidth'),configurable:true,enumerable:true});
+                Object.defineProperty(screen,'availHeight',{get:_natFn(function(){return \(sh);},'get availHeight'),configurable:true,enumerable:true});
                 """)
             }
         } else if let baseline = profile.fingerprintBaseline {
@@ -2735,8 +2809,8 @@ nonisolated enum StyleSheetProvider {
             // real measurements from the baseline capture, so they apply even
             // when the environment locks are skipped.
             lines.append("""
-            Object.defineProperty(window,'screenY',{get:function(){return \(baseline.screenFrameTop);},configurable:true,enumerable:true});
-            Object.defineProperty(window,'screenTop',{get:function(){return \(baseline.screenFrameTop);},configurable:true,enumerable:true});
+            Object.defineProperty(window,'screenY',{get:_natFn(function(){return \(baseline.screenFrameTop);},'get screenY'),configurable:true,enumerable:true});
+            Object.defineProperty(window,'screenTop',{get:_natFn(function(){return \(baseline.screenFrameTop);},'get screenTop'),configurable:true,enumerable:true});
             """)
         }
 
@@ -2749,7 +2823,7 @@ nonisolated enum StyleSheetProvider {
             var _savedAudioFP=\(audioFP);
             var _OrigProto=_origOAC.prototype;
             var _origStartRendering=_OrigProto.startRendering;
-            _OrigProto.startRendering=function(){
+            _OrigProto.startRendering=_natFn(function startRendering(){
                 var self=this;
                 return _origStartRendering.call(this).then(function(buf){
                     var ch=buf.getChannelData(0);
@@ -2763,7 +2837,7 @@ nonisolated enum StyleSheetProvider {
                     }
                     return buf;
                 });
-            };
+            },'startRendering');
             })();
             """)
         }
@@ -2779,7 +2853,7 @@ nonisolated enum StyleSheetProvider {
                 for(var i=0;i<res.length;i++){h=((h<<5)+h+res.charCodeAt(i))|0;}
                 return h+'';
             }
-            HTMLCanvasElement.prototype.toDataURL=function(){
+            HTMLCanvasElement.prototype.toDataURL=_natFn(function toDataURL(){
                 var result=_origToDataURL.apply(this,arguments);
                 if(this.width<=300&&this.height<=80){
                     var k=_ckey(result);
@@ -2789,9 +2863,9 @@ nonisolated enum StyleSheetProvider {
                     return _canvasCache[k];
                 }
                 return result;
-            };
+            },'toDataURL');
             var _origToBlob=HTMLCanvasElement.prototype.toBlob;
-            HTMLCanvasElement.prototype.toBlob=function(cb){
+            HTMLCanvasElement.prototype.toBlob=_natFn(function toBlob(cb){
                 var self=this;
                 if(self.width<=300&&self.height<=80){
                     var dataUrl=self.toDataURL.apply(self,[].slice.call(arguments,1));
@@ -2804,7 +2878,7 @@ nonisolated enum StyleSheetProvider {
                     return;
                 }
                 return _origToBlob.apply(self,arguments);
-            };
+            },'toBlob');
             })();
             """)
         }
@@ -2817,35 +2891,35 @@ nonisolated enum StyleSheetProvider {
             var _savedWebGLHash='\(escapedWGLHash)';
             var _origGetParam=WebGLRenderingContext.prototype.getParameter;
             var _cachedParams={};
-            WebGLRenderingContext.prototype.getParameter=function(p){
+            WebGLRenderingContext.prototype.getParameter=_natFn(function getParameter(p){
                 var result=_origGetParam.call(this,p);
                 if(p===this.RENDERER||p===this.VENDOR||p===this.VERSION||p===this.SHADING_LANGUAGE_VERSION){
                     if(!_cachedParams[p])_cachedParams[p]=result;
                     return _cachedParams[p];
                 }
                 return result;
-            };
+            },'getParameter');
             var _origGetExt=WebGLRenderingContext.prototype.getExtension;
             var _extCache={};
-            WebGLRenderingContext.prototype.getExtension=function(name){
+            WebGLRenderingContext.prototype.getExtension=_natFn(function getExtension(name){
                 if(!_extCache[name])_extCache[name]=_origGetExt.call(this,name);
                 return _extCache[name];
-            };
+            },'getExtension');
             if(typeof WebGL2RenderingContext!=='undefined'){
                 var _origGetParam2=WebGL2RenderingContext.prototype.getParameter;
-                WebGL2RenderingContext.prototype.getParameter=function(p){
+                WebGL2RenderingContext.prototype.getParameter=_natFn(function getParameter(p){
                     var result=_origGetParam2.call(this,p);
                     if(p===this.RENDERER||p===this.VENDOR||p===this.VERSION||p===this.SHADING_LANGUAGE_VERSION){
                         if(!_cachedParams[p])_cachedParams[p]=result;
                         return _cachedParams[p];
                     }
                     return result;
-                };
+                },'getParameter');
                 var _origGetExt2=WebGL2RenderingContext.prototype.getExtension;
-                WebGL2RenderingContext.prototype.getExtension=function(name){
+                WebGL2RenderingContext.prototype.getExtension=_natFn(function getExtension(name){
                     if(!_extCache[name])_extCache[name]=_origGetExt2.call(this,name);
                     return _extCache[name];
-                };
+                },'getExtension');
             }
             })();
             """)
@@ -2871,7 +2945,9 @@ nonisolated enum StyleSheetProvider {
         if(s._gumWrapped)return;
         s._gumWrapped=true;
         var _realGUM=_origGUM;
-        MediaDevices.prototype.getUserMedia=function(constraints){
+        // Masked through the shared disguise, so the logging wrapper's source
+        // never reads as visible script.
+        MediaDevices.prototype.getUserMedia=(s._asNative||function(f){return f;})(function getUserMedia(constraints){
             var entry={
                 timestamp:Date.now(),
                 url:window.location.href,
@@ -2896,7 +2972,7 @@ nonisolated enum StyleSheetProvider {
                 entry.wasSuccessful=false;
                 throw err;
             });
-        };
+        },'getUserMedia');
         }catch(e){}
         })();
         """
