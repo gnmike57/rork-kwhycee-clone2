@@ -99,6 +99,10 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
     /// Optional front-still smirk/smile prep. Off = no extra buttons.
     var frontFaceButtons: Bool = false
 
+    /// Found / lost / calibrated ticks for face tracking. Silent with Reduce
+    /// Motion either way; never on blinks.
+    var faceTrackingHaptics: Bool = true
+
     static let `default` = MediaBehaviorSettings()
 
     /// Pre-upgrade behaviour. Nothing new runs.
@@ -121,7 +125,8 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         showObservedHUD: false,
         autoOffAfterOnePass: false,
         showSequenceRecap: false,
-        frontFaceButtons: false
+        frontFaceButtons: false,
+        faceTrackingHaptics: false
     )
 
     /// True when the app behaves exactly as it did before this feature set.
@@ -147,6 +152,7 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
             && !autoOffAfterOnePass
             && !showSequenceRecap
             && !frontFaceButtons
+            && !faceTrackingHaptics
     }
 
     enum CodingKeys: String, CodingKey {
@@ -169,6 +175,7 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         case autoOffAfterOnePass
         case showSequenceRecap
         case frontFaceButtons
+        case faceTrackingHaptics
     }
 
     init(
@@ -190,7 +197,8 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         showObservedHUD: Bool = false,
         autoOffAfterOnePass: Bool = false,
         showSequenceRecap: Bool = false,
-        frontFaceButtons: Bool = false
+        frontFaceButtons: Bool = false,
+        faceTrackingHaptics: Bool = true
     ) {
         self.useAuditProfile = useAuditProfile
         self.showControlPill = showControlPill
@@ -211,6 +219,7 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         self.autoOffAfterOnePass = autoOffAfterOnePass
         self.showSequenceRecap = showSequenceRecap
         self.frontFaceButtons = frontFaceButtons
+        self.faceTrackingHaptics = faceTrackingHaptics
     }
 
     init(from decoder: Decoder) throws {
@@ -234,6 +243,7 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         autoOffAfterOnePass = try c.decodeIfPresent(Bool.self, forKey: .autoOffAfterOnePass) ?? false
         showSequenceRecap = try c.decodeIfPresent(Bool.self, forKey: .showSequenceRecap) ?? false
         frontFaceButtons = try c.decodeIfPresent(Bool.self, forKey: .frontFaceButtons) ?? false
+        faceTrackingHaptics = try c.decodeIfPresent(Bool.self, forKey: .faceTrackingHaptics) ?? true
     }
 }
 

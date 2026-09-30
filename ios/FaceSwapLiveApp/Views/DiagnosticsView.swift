@@ -3,6 +3,8 @@ import AVFoundation
 
 struct DiagnosticsView: View {
     @Environment(DeviceProfileManager.self) private var profileManager
+    /// For opening the Face Tracking sheet — Diagnostics has no browser of its own.
+    var viewModel: BrowserViewModel? = nil
     @State private var diagnosticsService = DiagnosticsService()
     @State private var fingerprintService = FingerprintService()
     @State private var constraintLog = ConstraintLogService()
@@ -11,6 +13,7 @@ struct DiagnosticsView: View {
     @State private var mediaReport: MediaMetadataReport?
     @State private var conformanceScore: MediaConformanceScore?
     @State private var showFilePicker = false
+    @State private var showFaceTrackingSheet = false
 
     @State private var expandedSections: Set<String> = ["session"]
 
@@ -73,6 +76,23 @@ struct DiagnosticsView: View {
     private var faceTrackingSection: some View {
         sectionCard("Face Tracking", icon: "face.smiling", sectionID: "face") {
             FaceTrackingDevSection()
+            if viewModel != nil {
+                Button {
+                    Haptics.tick()
+                    showFaceTrackingSheet = true
+                } label: {
+                    Label("Open Face Tracking controls", systemImage: "slider.horizontal.3")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(.white.opacity(0.06), in: .rect(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $showFaceTrackingSheet) {
+                    if let viewModel {
+                        FaceTrackingSheetView(viewModel: viewModel)
+                    }
+                }
+            }
         }
     }
 

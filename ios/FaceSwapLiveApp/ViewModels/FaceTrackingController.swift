@@ -21,6 +21,8 @@ final class FaceTrackingController {
 
     private static let modeKey = "faceTracking.mode"
     private static let portKey = "faceTracking.port"
+    private static let greenDotNoteKey = "faceTracking.greenDotNoteSeen"
+    private static let pillTipKey = "faceTracking.pillTipSeen"
 
     // MARK: - Settings
 
@@ -111,6 +113,10 @@ final class FaceTrackingController {
     /// Dropped Live Link Face datagrams, by reason.
     private(set) var packetRejections = PacketRejectionCounts()
 
+    /// How the second iPhone's packets are arriving: rate, estimated loss,
+    /// jitter and last-seen age.
+    private(set) var packetHealth = PacketHealth.empty
+
     /// Link mode has a face, but Stream Head Rotation is off.
     var isExpressionOnly: Bool {
         mode == .secondPhone && hasSeenLiveFace && !headPose.hasSeenHeadPose
@@ -125,6 +131,9 @@ final class FaceTrackingController {
 
     /// Wording for the meter and, later, the status capsule.
     var statusLabel: String {
+        if mode == .secondPhone, state == .receiving, !hasSeenLiveFace {
+            return "Receiving · no face"
+        }
         if isExpressionOnly, state == .receiving {
             if let senderName {
                 return "Receiving from \(senderName) · expression only"
@@ -134,6 +143,31 @@ final class FaceTrackingController {
         return state.label
     }
 
+    /// The status capsule's line, or nil when the capsule stays hidden.
+    var capsuleLine: String? {
+        FaceTrackingCapsule.line(
+            state: state,
+            rate: readingsPerSecond,
+            address: addresses.first?.address,
+            port: port,
+            senderName: senderName,
+            isExpressionOnly: isExpressionOnly,
+            hasSeenFace: hasSeenLiveFace
+        )
+    }
+
+    /// What colour the pill button and the capsule should wear.
+    var mood: FaceTrackingMood { FaceTrackingCapsule.mood(state: state) }
+
+    /// True when a found / lost / calibrated tick may fire: the user's switch
+    /// on and Reduce Motion off. Blinks never buzz either way.
+    nonisolated static func shouldBuzz(enabled: Bool, reduceMotion: Bool) -> Bool {
+        enabled && !reduceMotion
+    }
+
+    /// The user's haptics switch, mirrored from the media settings.
+    var isHapticsEnabled = true
+
     /// What this phone can do for same-iPhone tracking.
     var capability: FaceTrackingCapability { FaceTrackingCapability.current() }
 
@@ -142,6 +176,24 @@ final class FaceTrackingController {
 
     /// 0…1 while calibrating, nil otherwise.
     private(set) var calibrationProgress: Double?
+
+    /// The one-time green-dot note in This iPhone mode has been shown.
+    private(set) var hasSeenGreenDotNote: Bool
+
+    /// The first-time tip under the pill has been shown.
+    private(set) var hasSeenPillTip: Bool
+
+    func markGreenDotNoteSeen() {
+        guard !hasSeenGreenDotNote else { return }
+        hasSeenGreenDotNote = true
+        defaults.set(true, forKey: Self.greenDotNoteKey)
+    }
+
+    func markPillTipSeen() {
+        guard !hasSeenPillTip else { return }
+        hasSeenPillTip = true
+        defaults.set(true, forKey: Self.pillTipKey)
+    }
 
     /// The rest pose readings are re-centred on.
     private(set) var neutralBaseline: FacePose?
@@ -174,6 +226,7 @@ final class FaceTrackingController {
     private var appliedTrackerRate = 0
     private var senderLock = SenderLock()
     private var senderClock = SenderClock()
+    private var packetHealthTracker = PacketHealthTracker()
     private var headPose = HeadPosePresence()
     private var lostSince: TimeInterval?
     private var didWarnForThisLoss = false
@@ -186,6 +239,8 @@ final class FaceTrackingController {
         mode = FaceTrackingMode(rawValue: defaults.string(forKey: Self.modeKey) ?? "") ?? .thisPhone
         let storedPort = defaults.integer(forKey: Self.portKey)
         port = (1...Int(UInt16.max)).contains(storedPort) ? UInt16(storedPort) : LiveLinkFacePacket.defaultPort
+        hasSeenGreenDotNote = defaults.bool(forKey: Self.greenDotNoteKey)
+        hasSeenPillTip = defaults.bool(forKey: Self.pillTipKey)
     }
 
     // MARK: - Calibration
@@ -334,6 +389,8 @@ final class FaceTrackingController {
         senderName = nil
         senderLock.release()
         senderClock.reset()
+        packetHealthTracker.reset()
+        packetHealth = .empty
         headPose.reset()
         packetRejections.reset()
         appliedTrackerRate = 0
@@ -368,6 +425,7 @@ final class FaceTrackingController {
                 pose.timestamp = senderClock.localTime(qualified: senderTime, receivedAt: now)
             }
             lastPacketAt = now
+            if mode == .secondPhone { packetHealthTracker.record(at: now) }
             guard pose.hasFace else {
                 smoother.reset()
                 return
@@ -379,7 +437,9 @@ final class FaceTrackingController {
                 if let baseline = calibrator.add(smoothed, at: now) {
                     neutralBaseline = baseline
                     calibrationProgress = nil
-                    Haptics.snap()
+                    if Self.shouldBuzz(enabled: isHapticsEnabled, reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                        Haptics.snap()
+                    }
                 } else {
                     calibrationProgress = calibrator.progress(at: now)
                 }
@@ -466,6 +526,7 @@ final class FaceTrackingController {
         let window = now - 1
         recentReadings.removeAll { $0 < window }
         readingsPerSecond = recentReadings.count
+        if tickCount % 15 == 0 { packetHealth = packetHealthTracker.snapshot(at: now) }
 
         if calibrator.isRunning {
             calibrationProgress = calibrator.progress(at: now)
@@ -524,7 +585,9 @@ final class FaceTrackingController {
         if newState.isTracking, !wasTracking {
             lostSince = nil
             didWarnForThisLoss = false
-            if !UIAccessibility.isReduceMotionEnabled { Haptics.success() }
+            if Self.shouldBuzz(enabled: isHapticsEnabled, reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                Haptics.success()
+            }
         } else if newState == .lost, wasTracking {
             lostSince = FaceClock.now()
             didWarnForThisLoss = false
@@ -537,7 +600,9 @@ final class FaceTrackingController {
         guard state == .lost, !didWarnForThisLoss, let lostSince else { return }
         guard now - lostSince >= Self.lostHapticDelay else { return }
         didWarnForThisLoss = true
-        if !UIAccessibility.isReduceMotionEnabled { Haptics.warning() }
+        if Self.shouldBuzz(enabled: isHapticsEnabled, reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+            Haptics.warning()
+        }
     }
 
     // MARK: - Orientation

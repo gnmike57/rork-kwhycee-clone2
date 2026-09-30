@@ -6,6 +6,8 @@ struct BrowserContentView: View {
     @Bindable var viewModel: BrowserViewModel
     var onOpenMyVideos: (() -> Void)?
     @FocusState private var isURLBarFocused: Bool
+    @Environment(FaceTrackingController.self) private var tracking
+    @State private var showFaceTrackingSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,6 +44,9 @@ struct BrowserContentView: View {
         }
         .sheet(isPresented: $viewModel.showDeviceProfile) {
             DeviceAuditProfileView(store: viewModel.behavior, viewModel: viewModel)
+        }
+        .sheet(isPresented: $showFaceTrackingSheet) {
+            FaceTrackingSheetView(viewModel: viewModel)
         }
         .sheet(item: $viewModel.pendingRecap) { recap in
             SequenceRecapView(recap: recap) {
@@ -178,13 +183,25 @@ struct BrowserContentView: View {
                 MediaControlPill(
                     viewModel: viewModel,
                     isHidden: isURLBarFocused || viewModel.pendingPrompt != nil,
-                    onOpenSources: onOpenMyVideos
-                ) { _ in
-                    // Settings only. Tapping a camera never changes which camera
-                    // a site gets when it does not ask for one.
-                    viewModel.showOverlayPanel = true
-                }
+                    onOpenSources: onOpenMyVideos,
+                    onOpenControls: { _ in
+                        // Settings only. Tapping a camera never changes which camera
+                        // a site gets when it does not ask for one.
+                        viewModel.showOverlayPanel = true
+                    },
+                    onOpenFaceTracking: { showFaceTrackingSheet = true }
+                )
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
+
+                if LivingStills.isAvailable {
+                    FaceTrackingCapsuleView(
+                        placement: viewModel.behavior.pillPlacement,
+                        isHidden: isURLBarFocused || viewModel.pendingPrompt != nil
+                    )
+                    .transition(.opacity)
+
+                    faceTrackingTip
+                }
             }
 
             if shouldShowHUD, let snapshot = viewModel.observedFeed {
@@ -225,6 +242,54 @@ struct BrowserContentView: View {
         .animation(.spring(duration: 0.3), value: viewModel.pendingPrompt?.id)
         .animation(.easeOut(duration: 0.2), value: shouldShowHUD)
         .animation(.spring(duration: 0.3), value: viewModel.downloadService.activeToastID)
+    }
+
+    /// One-time discovery tip under the pill. Tapping it opens the sheet.
+    @ViewBuilder
+    private var faceTrackingTip: some View {
+        if !tracking.hasSeenPillTip, !viewModel.behavior.pillPlacement.isTucked {
+            GeometryReader { geo in
+                let usableHeight = max(geo.size.height - 58 - 24, 1)
+                let y = 12 + usableHeight * viewModel.behavior.pillPlacement.verticalFraction + 58 / 2 + 44
+                Button {
+                    Haptics.tick()
+                    tracking.markPillTipSeen()
+                    showFaceTrackingSheet = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "faceid")
+                        Text("Animate stills with your face")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(capsuleBackground)
+                    .shadow(color: .black.opacity(0.4), radius: 6, y: 3)
+                }
+                .buttonStyle(.plain)
+                .frame(height: 44)
+                .position(
+                    x: viewModel.behavior.pillPlacement.isLeftEdge
+                        ? min(geo.size.width / 2, 150)
+                        : max(geo.size.width / 2, geo.size.width - 150),
+                    y: y
+                )
+                .transition(.opacity)
+            }
+            .frame(height: 0)
+            .animation(.easeOut(duration: 0.25), value: viewModel.behavior.pillPlacement)
+        }
+    }
+
+    private var capsuleBackground: some View {
+        ZStack {
+            Capsule().fill(.ultraThinMaterial)
+            Capsule().fill(Color.black.opacity(0.36))
+            Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 0.8)
+        }
     }
 
     private var shouldShowHUD: Bool {

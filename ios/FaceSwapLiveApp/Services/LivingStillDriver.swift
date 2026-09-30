@@ -18,7 +18,9 @@ final class LivingStillDriver {
     private var pollMisses = 0
     private var lastGeneration = 0
     private var tickCount = 0
-    private var strengthCache: [ObjectIdentifier: Double] = [:]
+    /// Cached per photo, stamped with the memory store's change count so a
+    /// strength edit in the sheet takes effect on the very next frame.
+    private var strengthCache: [ObjectIdentifier: (change: Int, value: Double)] = [:]
 
     func start(viewModel: BrowserViewModel, tracking: FaceTrackingController) {
         guard LivingStills.isAvailable else { return }
@@ -146,7 +148,8 @@ final class LivingStillDriver {
 
     private func strength(for image: UIImage, in viewModel: BrowserViewModel) -> Double {
         let key = ObjectIdentifier(image)
-        if let cached = strengthCache[key] { return cached }
+        let change = viewModel.photoMemory.changeCount
+        if let cached = strengthCache[key], cached.change == change { return cached.value }
         let value: Double
         if let fingerprint = PhotoFingerprint.make(from: image),
            let memory = viewModel.photoMemory.match(fingerprint) {
@@ -154,7 +157,7 @@ final class LivingStillDriver {
         } else {
             value = PhotoMemory.defaultStrength
         }
-        strengthCache[key] = value
+        strengthCache[key] = (change, value)
         return value
     }
 

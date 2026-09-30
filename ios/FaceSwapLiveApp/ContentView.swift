@@ -61,7 +61,7 @@ struct ContentView: View {
                 )
             }
             Tab("Diagnostics", systemImage: "waveform.badge.magnifyingglass", value: AppTab.diagnostics) {
-                DiagnosticsView()
+                DiagnosticsView(viewModel: browserViewModel)
             }
             Tab("Profile", systemImage: "iphone.gen3", value: AppTab.profile) {
                 ProfileSelectionView(profileManager: profileManager) {
@@ -79,6 +79,9 @@ struct ContentView: View {
         }
         .onAppear {
             livingStill.start(viewModel: browserViewModel, tracking: faceTracking)
+        }
+        .onChange(of: browserViewModel.behavior.settings.faceTrackingHaptics, initial: true) { _, on in
+            faceTracking.isHapticsEnabled = on
         }
         .onChange(of: selectedTab, initial: true) { _, tab in
             faceTracking.setPreviewTabSelected(tab == .preview)

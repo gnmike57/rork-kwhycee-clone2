@@ -21,6 +21,10 @@ final class PhotoMemoryStore {
     private let indexURL: URL
     private(set) var records: [PhotoMemory] = []
 
+    /// Bumped on every write, so live readers can tell when a photo's stored
+    /// strength has changed without watching record identity.
+    private(set) var changeCount = 0
+
     init(directory: URL? = nil, photoBudget: Int = 200, byteBudget: Int = 50 * 1024 * 1024) {
         let folder = directory ?? (try? ProtectedDirectory.make(named: "FaceMemory")) ?? FileManager.default.temporaryDirectory
         self.directory = folder
@@ -46,10 +50,12 @@ final class PhotoMemoryStore {
         records.sort { $0.savedAt < $1.savedAt }
         evict()
         write()
+        changeCount += 1
     }
 
     func removeAll() {
         records = []
+        changeCount += 1
         try? FileManager.default.removeItem(at: indexURL)
     }
 

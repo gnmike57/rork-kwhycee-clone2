@@ -101,4 +101,18 @@ nonisolated struct FacePose: Sendable, Equatable {
     func degrees(_ channel: FaceChannel) -> Double {
         Double(self[channel]) * 180 / .pi
     }
+
+    // MARK: - Per-photo storage
+
+    /// The values as a flat array, the form photo memory stores a rest pose in.
+    func encodeCalibration() -> [Float] {
+        values
+    }
+
+    /// Restores a pose stored by `encodeCalibration()`. Nil when the stored
+    /// array has the wrong length, so a stale record can never read as rest.
+    static func decodeCalibration(_ stored: [Float]?) -> FacePose? {
+        guard let stored, stored.count == FaceChannel.count else { return nil }
+        return FacePose(values: stored, timestamp: 0, hasFace: true)
+    }
 }

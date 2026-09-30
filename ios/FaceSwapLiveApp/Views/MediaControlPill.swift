@@ -19,6 +19,10 @@ struct MediaControlPill: View {
     /// Front/Back thumbnails jump here now that sources live in My Media.
     var onOpenSources: (() -> Void)? = nil
     var onOpenControls: (BrowserViewModel.CameraFacing) -> Void
+    /// Long-press on the face button opens the Face Tracking sheet.
+    var onOpenFaceTracking: (() -> Void)? = nil
+
+    @Environment(FaceTrackingController.self) private var tracking
 
     @State private var drag: CGSize = .zero
     @State private var isDragging: Bool = false
@@ -26,6 +30,11 @@ struct MediaControlPill: View {
     /// Runs while a zoom button is held down, so a press ramps smoothly
     /// instead of needing one tap per step.
     @State private var zoomRepeat: Task<Void, Never>?
+    /// The searching pulse on the face button.
+    @State private var faceBreathing = false
+    /// Set by the long press so the touch-up that follows does not also
+    /// toggle tracking.
+    @State private var faceDidLongPress = false
 
     private var store: MediaBehaviorStore { viewModel.behavior }
     private var placement: PillPlacement { store.pillPlacement }
@@ -111,6 +120,9 @@ struct MediaControlPill: View {
     private var pillBody: some View {
         HStack(spacing: controlSpacing) {
             powerButton
+            if showsFaceTracking {
+                faceTrackingButton
+            }
             nextButton
             reinjectButton
             if viewModel.behavior.settings.liveMotion {
@@ -183,6 +195,14 @@ struct MediaControlPill: View {
                 Image(systemName: placement.isLeftEdge ? "chevron.right" : "chevron.left")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(viewModel.isMediaActive ? Color.green : .white.opacity(0.75))
+
+                // The face button's state survives the tuck as a dot.
+                if showsFaceTracking {
+                    Circle()
+                        .fill(tracking.mood.tint)
+                        .frame(width: 7, height: 7)
+                        .offset(x: placement.isLeftEdge ? 11 : -11, y: -16)
+                }
             }
             // Minimum touch size, even though the visible capsule is slimmer.
             .frame(width: 44, height: 56)
@@ -222,6 +242,76 @@ struct MediaControlPill: View {
         .disabled(!viewModel.hasSource)
         .opacity(viewModel.hasSource ? 1 : 0.4)
         .accessibilityLabel(viewModel.isMediaActive ? "Disable media" : "Enable media")
+    }
+
+    // MARK: - Face tracking
+
+    /// Only when a still could actually be animated: a debug build with a
+    /// still on an active feed. Normal browsing never changes.
+    private var showsFaceTracking: Bool {
+        LivingStills.isAvailable && viewModel.stillOnActiveFeed
+    }
+
+    private var faceTrackingButton: some View {
+        let mood = tracking.mood
+        return Button {
+            // A long press opens the sheet; the touch-up that follows must
+            // not also toggle tracking.
+            if faceDidLongPress {
+                faceDidLongPress = false
+                return
+            }
+            Haptics.firm()
+            tracking.isEnabled.toggle()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(mood.fill)
+                    .frame(width: 34, height: 34)
+
+                Circle()
+                    .strokeBorder(
+                        mood.tint.opacity(mood == .off || mood == .waiting ? 0.18 : 0.65),
+                        lineWidth: 1.2
+                    )
+                    .frame(width: 34, height: 34)
+
+                Image(systemName: "faceid")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(mood.tint)
+                    .scaleEffect(faceBreathing ? 1.12 : 1)
+            }
+        }
+        .buttonStyle(PillPress())
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45)
+                .onEnded { _ in
+                    faceDidLongPress = true
+                    Haptics.tick()
+                    onOpenFaceTracking?()
+                }
+        )
+        .accessibilityLabel("Face tracking, \(mood.spoken)")
+        .accessibilityHint("Tap to turn tracking on or off")
+        .accessibilityAction(named: "Face Tracking options") {
+            onOpenFaceTracking?()
+        }
+        .onAppear { setFaceBreathing(mood == .searching) }
+        .onChange(of: mood) { _, new in setFaceBreathing(new == .searching) }
+    }
+
+    /// Starts and stops the searching pulse. Stopping snaps without the
+    /// repeat-forever animation, which would otherwise keep swinging.
+    private func setFaceBreathing(_ on: Bool) {
+        if on {
+            withAnimation(.easeInOut(duration: 1.25).repeatForever(autoreverses: true)) {
+                faceBreathing = true
+            }
+        } else {
+            var stop = Transaction()
+            stop.disablesAnimations = true
+            withTransaction(stop) { faceBreathing = false }
+        }
     }
 
     private var nextButton: some View {
