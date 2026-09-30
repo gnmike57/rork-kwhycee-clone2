@@ -133,23 +133,32 @@ struct FaceRigTests {
         let blue = Self.solid(.blue)
         store.save(facing: "front", slot: 1, image: blue, stamp: Data([1, 2, 3]), original: nil, crops: .identity)
         let promoted = store.restored()
-        #expect(promoted.count == 1)
-        #expect(promoted[0].slot == 0)
-        #expect(promoted[0].stamp == Data([1, 2, 3]))
+        #expect(promoted.count == 1, "a single kept still restores as one record")
+        // Counts are opened with #require, not bare subscripts: a failing #expect
+        // keeps the test running, and a subscript past a short array would kill
+        // the whole test process as an "Index out of range" instead of reporting.
+        let restoredFirst = try #require(promoted.first)
+        #expect(restoredFirst.slot == 0)
+        #expect(restoredFirst.stamp == Data([1, 2, 3]))
 
         store.save(facing: "front", slot: 0, image: red, stamp: nil, original: nil, crops: .identity)
         store.save(facing: "front", slot: 1, image: blue, stamp: nil, original: nil, crops: .identity)
         store.swap(facing: "front")
         let swapped = store.restored().sorted { $0.slot < $1.slot }
-        #expect(swapped.map(\.slot) == [0, 1])
-        #expect(Self.isBlue(swapped[0].image))
-        #expect(Self.isRed(swapped[1].image))
+        #expect(swapped.count == 2, "both slots survive the swap")
+        let lower = try #require(swapped.first)
+        let upper = try #require(swapped.last)
+        #expect(lower.slot == 0)
+        #expect(upper.slot == 1)
+        #expect(Self.isBlue(lower.image))
+        #expect(Self.isRed(upper.image))
 
         store.remove(facing: "front", slot: 0)
         let afterClear = store.restored()
-        #expect(afterClear.count == 1)
-        #expect(afterClear[0].slot == 0)
-        #expect(Self.isRed(afterClear[0].image))
+        #expect(afterClear.count == 1, "removing slot 0 leaves slot 1, promoted")
+        let remaining = try #require(afterClear.first)
+        #expect(remaining.slot == 0)
+        #expect(Self.isRed(remaining.image))
 
         store.clearAll()
         #expect(store.restored().isEmpty)
