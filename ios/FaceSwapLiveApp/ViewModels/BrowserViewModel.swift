@@ -1094,11 +1094,11 @@ final class BrowserViewModel {
         guard isMediaActive, hasSource else { return .off }
         if pipelineRepairStreak > 0 { return .lost }
         if let health = lastHealth, health.hasDroppedHook { return .lost }
-        if isLiveStreamActive {
-            if let at = lastStatusAt, Date().timeIntervalSince(at) < 8 { return .flowing }
-            return .silent
-        }
-        return .silent
+        // The page's own active/inactive reports are the truthful signal: they
+        // arrive at stream start and end, and navigation resets them. A status
+        // timestamp cannot be trusted for freshness — a healthy feed reports
+        // once and then just keeps painting, so it must stay green.
+        return isLiveStreamActive ? .flowing : .silent
     }
 
     /// The page is going away: its status answers and health belonged to it.
@@ -1155,13 +1155,29 @@ final class BrowserViewModel {
                 }
                 self.pipelineRepairStreak += 1
                 let site = self.currentURL?.host() ?? ""
-                if self.pipelineRepairStreak == 1 {
-                    self.pipelineLog.addRepair(site: site, "A hook dropped on the page — re-sending the feed.")
-                    self.forceReinject()
-                } else if self.pipelineRepairStreak >= 3 {
+                if self.pipelineRepairStreak >= 3 {
                     self.pipelineRepairStreak = 0
                     self.pipelineLog.addRepair(site: site, "The page kept losing its hooks — reloading it quietly.")
                     self.webView?.reload()
+                    return
+                }
+                // First answer: put the page's own captured wrappers back, then
+                // re-send the feed. The next heartbeat verifies the restore.
+                self.webView?.evaluateJavaScript(StyleSheetProvider.repairHooksScript) { [weak self] result, _ in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        let site = self.currentURL?.host() ?? ""
+                        let outcome = (result as? String) ?? "none"
+                        switch outcome {
+                        case "intact":
+                            self.pipelineLog.addRepair(site: site, "Hooks read intact again — re-sending the feed.")
+                        case "none":
+                            self.pipelineLog.addError(site: site, "Could not reach the page state to restore its hooks.")
+                        default:
+                            self.pipelineLog.addRepair(site: site, "Restored \(outcome) — re-sending the feed.")
+                        }
+                        self.forceReinject()
+                    }
                 }
             }
         }

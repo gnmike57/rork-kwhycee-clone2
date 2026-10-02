@@ -400,6 +400,30 @@ extension StyleSheetProvider {
         return lines.joined(separator: "\n")
     }
 
+    /// Puts the page's own captured hook references back on the prototypes.
+    ///
+    /// A page script that overwrote a hook is the one drop this can undo
+    /// without a reload: the patch captured each wrapper as it installed it
+    /// (and the constraint logger refreshed the camera capture afterwards),
+    /// so restoring is a plain assignment of values the page already holds —
+    /// inside the state token, invisible from outside. Names what it
+    /// restored, `intact` when everything already reads as ours.
+    static var repairHooksScript: String {
+        var lines: [String] = []
+        lines.append("(function(){")
+        lines.append("try{")
+        lines.append("var s=\(StyleSheetProvider.fslStateAccessorJS);")
+        lines.append("if(!s)return 'none';")
+        lines.append("var fixed=[];")
+        lines.append("if(s._gumw&&MediaDevices.prototype.getUserMedia!==s._gumw){try{MediaDevices.prototype.getUserMedia=s._gumw;fixed.push('camera request hook');}catch(e){}}")
+        lines.append("if(s._enuw&&MediaDevices.prototype.enumerateDevices!==s._enuw){try{MediaDevices.prototype.enumerateDevices=s._enuw;fixed.push('device list hook');}catch(e){}}")
+        lines.append("if(s._clk&&HTMLInputElement.prototype.click!==s._clk){try{HTMLInputElement.prototype.click=s._clk;fixed.push('file input hook');}catch(e){}}")
+        lines.append("return fixed.join(', ')||'intact';")
+        lines.append("}catch(e){return 'none';}")
+        lines.append("})();")
+        return lines.joined(separator: "\n")
+    }
+
     /// Advances both camera queues in the page, mirroring the pill's Next button.
     static var advanceBothQueuesScript: String {
         var lines: [String] = []

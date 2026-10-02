@@ -48,6 +48,11 @@ struct LivePeekView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: shouldShow)
+        // Re-enabling the switch brings the look-in back even after a manual
+        // dismissal in the same visit.
+        .onChange(of: viewModel.behavior.settings.showLivePeek) { _, on in
+            if on { dismissed = false }
+        }
     }
 
     private func thumbnail(_ frame: UIImage) -> some View {
