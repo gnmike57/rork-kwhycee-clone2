@@ -54,9 +54,6 @@ nonisolated enum StyleSheetProvider {
     try{
     if(window[Symbol.for('fsl__FSL_KEY__')])return;
 
-    _s._asNative=asNative;
-    _s._firstTouch=firstTouch;
-
     try{
         if(typeof navigator.standalone==='undefined'){
             Object.defineProperty(navigator,'standalone',{get:maskNative(function(){return false;},'get standalone'),configurable:true,enumerable:true});
@@ -117,6 +114,11 @@ nonisolated enum StyleSheetProvider {
     _s.capMode='__FSL_CAPMODE__';
     _s.hard=__FSL_HARD__;
     _s.mask=__FSL_MASK__;
+    // The later profile scripts pull the native disguise off this state, so it
+    // is exposed only after the state object itself exists. Placing these
+    // above the state creation throws before any hook is installed.
+    _s._asNative=asNative;
+    _s._firstTouch=firstTouch;
 
     // Device-matched media layer. Every field below stays inert until the
     // behaviour script switches it on, so the default path is byte-identical.
