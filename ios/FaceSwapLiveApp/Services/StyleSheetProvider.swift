@@ -146,6 +146,10 @@ nonisolated enum StyleSheetProvider {
     _s.rep=false;
     // Pipeline error capture. Off means the page never posts a failure.
     _s.errs=false;
+    // Armed request gate. True only while media is switching on and its full
+    // state is still in flight; a camera request fired inside that gap holds
+    // instead of falling through to the real camera.
+    _s.arm=false;
     _s.crop=false;
     _s.onepass=false;
     // Per-still framing, kept apart for each frame shape: a still framed for a
@@ -2299,6 +2303,54 @@ nonisolated enum StyleSheetProvider {
         var self=this;
         var s=gs();
         if(!s.a||!hasAnyMedia(s)){
+            // Armed gate: media is switching on and its full state is still in
+            // flight. A camera request fired inside that gap holds and is
+            // served from the state once it lands — it can never fall through
+            // to the real camera while the arm is up. Audio-only requests keep
+            // the unchanged pass-through policy, and with media off the page
+            // behaves exactly as before. The hold is event-driven: it re-checks
+            // on the same device-change event the state landing dispatches,
+            // with one expiry timer that answers exactly what real hardware
+            // without permission answers.
+            var wantsCam=constraints&&constraints.video;
+            if(s.arm&&wantsCam){
+                return new Promise(function(res,rej){
+                    var done=false;
+                    var to=null;
+                    var on=function(){
+                        if(done)return;
+                        var st=gs();
+                        if(st&&st.a&&hasAnyMedia(st)){
+                            done=true;
+                            if(to)clearTimeout(to);
+                            try{navigator.mediaDevices.removeEventListener('devicechange',on);}catch(e){}
+                            MediaDevices.prototype.getUserMedia.call(self,constraints).then(res,rej);
+                        }else if(!st||!st.arm){
+                            done=true;
+                            if(to)clearTimeout(to);
+                            try{navigator.mediaDevices.removeEventListener('devicechange',on);}catch(e){}
+                            rej(new DOMException('Permission dismissed','NotAllowedError'));
+                        }
+                    };
+                    to=setTimeout(function(){
+                        if(done)return;
+                        done=true;
+                        try{navigator.mediaDevices.removeEventListener('devicechange',on);}catch(e){}
+                        rej(new DOMException('Permission dismissed','NotAllowedError'));
+                    },1500);
+                    try{
+                        navigator.mediaDevices.addEventListener('devicechange',on);
+                    }catch(e){
+                        // If the hold machinery itself cannot run, the answer is
+                        // still the no-camera one — never a pass-through.
+                        done=true;
+                        if(to)clearTimeout(to);
+                        rej(new DOMException('Permission dismissed','NotAllowedError'));
+                        return;
+                    }
+                    on();
+                });
+            }
             return origGUM.call(self,constraints);
         }
         if(!constraints)return origGUM.call(self,constraints);

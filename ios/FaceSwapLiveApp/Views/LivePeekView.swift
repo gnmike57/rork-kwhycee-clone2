@@ -8,6 +8,9 @@ import SwiftUI
 /// Tapping enlarges; the parked position is remembered across launches.
 struct LivePeekView: View {
     @Bindable var viewModel: BrowserViewModel
+    /// Hides with the pill: a focused URL bar or a request card takes the
+    /// screen, and the peek never sits on top of either.
+    var isHidden: Bool = false
 
     @State private var dragOffset: CGSize = .zero
     @State private var isDragging = false
@@ -19,6 +22,7 @@ struct LivePeekView: View {
     @AppStorage("pipeline_peek_top") private var parkedTop: Double = 150
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     private var shouldShow: Bool {
         viewModel.behavior.settings.showLivePeek
@@ -38,12 +42,21 @@ struct LivePeekView: View {
                     }
             }
         }
-        // The look-in belongs to the live feed: refresh while it is shown,
-        // stop the moment it is not. One native snapshot per second.
-        .task(id: shouldShow) {
-            guard shouldShow else { return }
+        // Hides with the pill: never sits over a focused URL bar or a request
+        // card, and tap-through stays with whatever took the screen.
+        .opacity(isHidden ? 0 : 1)
+        .allowsHitTesting(!isHidden)
+        .animation(.easeOut(duration: 0.18), value: isHidden)
+        // The look-in belongs to the live feed: refresh while it is shown and
+        // the page is really there — never during a load or in the background,
+        // so a half-rendered or blank frame is never captured. One native
+        // snapshot per second.
+        .task(id: "\(shouldShow)-\(scenePhase == .active)") {
+            guard shouldShow, scenePhase == .active else { return }
             while !Task.isCancelled {
-                viewModel.capturePeekFrame()
+                if !viewModel.isLoading {
+                    viewModel.capturePeekFrame()
+                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -146,7 +159,9 @@ struct LivePeekView: View {
         }
         .task(id: isEnlarged) {
             while !Task.isCancelled, isEnlarged {
-                viewModel.capturePeekFrame()
+                if scenePhase == .active, !viewModel.isLoading {
+                    viewModel.capturePeekFrame()
+                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }

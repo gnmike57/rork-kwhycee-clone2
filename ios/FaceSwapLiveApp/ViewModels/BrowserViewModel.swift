@@ -1083,6 +1083,14 @@ final class BrowserViewModel {
     private var pipelineRepairStreak: Int = 0
     private var watchdogTask: Task<Void, Never>?
 
+    /// Reload circuit breaker: one quiet reload per site per cooldown. While
+    /// the breaker is engaged the watchdog watches only — a hostile page that
+    /// keeps clobbering its hooks gets a red dot and a logged warning, never
+    /// a repair/reload loop.
+    private var quietReloadedAt: [String: Date] = [:]
+    private var repairsPausedUntil: [String: Date] = [:]
+    private let reloadCooldown: TimeInterval = 600
+
     /// Latest native snapshot of the page, for the tiny look-in. Captured
     /// with the web view's own snapshot API, which the page cannot observe.
     private(set) var peekFrame: UIImage?
@@ -1108,6 +1116,12 @@ final class BrowserViewModel {
         pipelineRepairStreak = 0
     }
 
+    /// True when this site has not had a quiet reload inside the cooldown.
+    private func canQuietReload(host: String) -> Bool {
+        guard let last = quietReloadedAt[host] else { return true }
+        return Date().timeIntervalSince(last) >= reloadCooldown
+    }
+
     /// Starts the heartbeat once; every tick re-checks its own conditions.
     private func ensurePipelineWatchdog() {
         guard watchdogTask == nil else { return }
@@ -1127,6 +1141,13 @@ final class BrowserViewModel {
             pipelineRepairStreak = 0
             return
         }
+        // Discipline: never repair while a request card is up, while the page
+        // is navigating or still loading, or while the app is not active — so
+        // the watchdog can never race a navigation, fight the prompt-hold
+        // machinery, or repair a half-loaded document. A skipped tick is
+        // silent: the next one re-checks.
+        guard pendingPrompt == nil, !isLoading,
+              UIApplication.shared.applicationState == .active else { return }
         webView.evaluateJavaScript(StyleSheetProvider.pipelineHealthScript) { [weak self] result, _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -1151,14 +1172,28 @@ final class BrowserViewModel {
                 }
                 guard health.hasDroppedHook else {
                     self.pipelineRepairStreak = 0
+                    // A page that proves itself healthy lifts the breaker for
+                    // its site, so a genuine page change recovers on its own.
+                    if health.feedActive {
+                        self.repairsPausedUntil.removeValue(forKey: self.currentURL?.host() ?? "")
+                    }
                     return
                 }
                 self.pipelineRepairStreak += 1
                 let site = self.currentURL?.host() ?? ""
+                // Circuit breaker engaged: watch only. The dot stays honest
+                // because the health answer itself keeps reporting the drop.
+                if let until = self.repairsPausedUntil[site], Date() < until { return }
                 if self.pipelineRepairStreak >= 3 {
                     self.pipelineRepairStreak = 0
-                    self.pipelineLog.addRepair(site: site, "The page kept losing its hooks — reloading it quietly.")
-                    self.webView?.reload()
+                    if self.canQuietReload(host: site) {
+                        self.quietReloadedAt[site] = Date()
+                        self.repairsPausedUntil[site] = Date().addingTimeInterval(self.reloadCooldown)
+                        self.pipelineLog.addRepair(site: site, "The page kept losing its hooks — one quiet reload, then watch-only for ten minutes.")
+                        self.webView?.reload()
+                    } else {
+                        self.pipelineLog.addError(site: site, "Hooks keep dropping past the reload cooldown — watching only, dot stays red.")
+                    }
                     return
                 }
                 // First answer: put the page's own captured wrappers back, then
@@ -1677,6 +1712,14 @@ final class BrowserViewModel {
         ensurePipelineWatchdog()
         guard let webView else { return }
 
+        // Arm the request gate first, in its own queued write, so a camera
+        // request fired while the full state below is still in flight holds
+        // instead of falling through to the real camera.
+        webView.evaluateJavaScript(
+            StyleSheetProvider.mediaGateScript(armed: isMediaActive && hasSource),
+            completionHandler: nil
+        )
+
         if frontSourceType == .video, let url = frontVideoURL {
             schemeHandler.frontVideoFileURL = url
         }
@@ -1790,6 +1833,10 @@ final class BrowserViewModel {
             "var s=\(StyleSheetProvider.fslStateAccessorJS);",
             "if(!s)return;",
             "s.a=true;",
+            // The gate is armed for the document too: the full state below is
+            // written in this same script, but the arm flag makes the gap
+            // airtight even if a later write is ever delayed.
+            "s.arm=true;",
             "s.ra=\(replaceAll);",
             "s.adv='\(adv)';",
             "s.defFacing='\(defFacing)';",

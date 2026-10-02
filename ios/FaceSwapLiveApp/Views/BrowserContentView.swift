@@ -205,8 +205,11 @@ struct BrowserContentView: View {
             }
 
             if viewModel.behavior.settings.showLivePeek, viewModel.currentURL != nil {
-                LivePeekView(viewModel: viewModel)
-                    .transition(.opacity)
+                LivePeekView(
+                    viewModel: viewModel,
+                    isHidden: isURLBarFocused || viewModel.pendingPrompt != nil
+                )
+                .transition(.opacity)
             }
 
             if shouldShowHUD, let snapshot = viewModel.observedFeed {

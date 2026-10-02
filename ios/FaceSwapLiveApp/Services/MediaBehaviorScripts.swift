@@ -424,6 +424,22 @@ extension StyleSheetProvider {
         return lines.joined(separator: "\n")
     }
 
+    /// Arms or disarms the request gate in one invisible write.
+    ///
+    /// Arming is queued before the full media state, so a camera request fired
+    /// inside the enable gap holds instead of reaching the real camera.
+    /// Disarming returns the page to its unchanged behavior.
+    static func mediaGateScript(armed: Bool) -> String {
+        var lines: [String] = []
+        lines.append("(function(){")
+        lines.append("try{")
+        lines.append("var s=\(StyleSheetProvider.fslStateAccessorJS);")
+        lines.append("if(s)s.arm=\(armed);")
+        lines.append("}catch(e){}")
+        lines.append("})();")
+        return lines.joined(separator: "\n")
+    }
+
     /// Advances both camera queues in the page, mirroring the pill's Next button.
     static var advanceBothQueuesScript: String {
         var lines: [String] = []
