@@ -238,6 +238,10 @@ struct BrowserWebContainer: UIViewRepresentable {
                 vm?.isLiveStreamActive = false
                 vm?.motionEasedLevel = 0
                 vm?.resetInjectSessionForNewDocument()
+                // The page is going away: its status answers and health belonged
+                // to it, so the indicator drops back until the next page
+                // proves itself.
+                vm?.notePipelinePageChange()
             }
         }
 

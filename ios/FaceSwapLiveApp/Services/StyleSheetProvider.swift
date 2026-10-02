@@ -144,6 +144,8 @@ nonisolated enum StyleSheetProvider {
     // Mixed with the site's own name to produce this site's identifiers.
     _s.idsec='';
     _s.rep=false;
+    // Pipeline error capture. Off means the page never posts a failure.
+    _s.errs=false;
     _s.crop=false;
     _s.onepass=false;
     // Per-still framing, kept apart for each frame shape: a still framed for a
@@ -537,6 +539,22 @@ nonisolated enum StyleSheetProvider {
             if(!mh)return;
             mh.postMessage({eased:level,facing:facing||''});
         }catch(e){}
+    }
+
+    // Pipeline error capture. Posts a swallowed failure over the private status
+    // channel so the app's own log can show it. Gated on `errs`, so with the
+    // switch off this is one boolean check — and nothing ever crosses the
+    // bridge. Nothing here is installed on any prototype: it is an internal
+    // helper only our own catch blocks call.
+    function fslErr(where,e){
+        try{
+            var s=gs();
+            if(!s||!s.errs)return;
+            var mh=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.fslStatus;
+            if(!mh)return;
+            var msg=(e&&(e.message||e.name))||String(e||'unknown');
+            mh.postMessage({err:true,w:String(where||'').slice(0,24),m:String(msg).slice(0,160)});
+        }catch(e2){}
     }
 
     // ---- Capability checking ---------------------------------------------
@@ -1386,7 +1404,7 @@ nonisolated enum StyleSheetProvider {
                     .then(function(){return pc1.setRemoteDescription(pc2.localDescription);})
                     .catch(function(){settle(null);});
                 setTimeout(function(){settle(null);},2500);
-            }catch(e){settle(null);}
+            }catch(e){fslErr('loopback',e);settle(null);}
         });
     }
 
@@ -1442,6 +1460,7 @@ nonisolated enum StyleSheetProvider {
                 var nextAt=nowMs()+interval;
                 s._lv={facing:requestedFacing,cnv:cnv,ctx:ctx,fps:fps,interval:interval,lay:lay,nextAt:nextAt};
                 var loop=function(){
+                    s._tick=nowMs();
                     if(!s.a){reportStatus('',false);return;}
                     var cropNow=stillCropFor(isBack,slot,cw,ch);
                     var scNow=Math.max(cw/iw,ch/ih);
@@ -1528,6 +1547,7 @@ nonisolated enum StyleSheetProvider {
                             lay:lay
                         };
                         var loop=function(){
+                            s._tick=nowMs();
                             if(!s.a||vid.paused||vid.ended)return;
                             var cw2=cnv.width,ch2=cnv.height;
                             var vw2=vid.videoWidth||cw2,vh2=vid.videoHeight||ch2;
@@ -2357,6 +2377,21 @@ nonisolated enum StyleSheetProvider {
         return origGUM.call(self,constraints);
     },'getUserMedia');
 
+    // Pipeline health, read by the app's own heartbeat through the state
+    // accessor. Every answer is a plain comparison against references this
+    // script captured itself, and the reader lives behind the state token,
+    // so page code has no way in. Nothing here installs or wraps anything.
+    _s._gumw=MediaDevices.prototype.getUserMedia;
+    _s._enuw=MediaDevices.prototype.enumerateDevices;
+    _s._health=function(){
+        var out={a:_s.a?1:0,gum:0,enu:0,clk:1,live:_s._lv?1:0,frz:_s.frz?1:0,tick:0,hard:_s.hard?1:0};
+        try{out.gum=(_s._gumw&&MediaDevices.prototype.getUserMedia===_s._gumw)?1:0;}catch(e){}
+        try{out.enu=(_s._enuw&&MediaDevices.prototype.enumerateDevices===_s._enuw)?1:0;}catch(e){}
+        try{if(_s._clk)out.clk=(HTMLInputElement.prototype.click===_s._clk)?1:0;}catch(e){}
+        try{out.tick=_s._tick?Math.max(0,Math.round(nowMs()-_s._tick)):0;}catch(e){}
+        return out;
+    };
+
     // The file path is untouched: same bytes, same name, same photo details.
     // The two optional arguments only pick WHICH of the user's own items goes
     // out — they never alter the item itself.
@@ -2467,6 +2502,7 @@ nonisolated enum StyleSheetProvider {
                 // A non-native own `files` accessor on the input is a hard flag
                 // on trust scanners. If the genuine setter path failed, the
                 // input stays empty — never leave a wrapped accessor behind.
+                fslErr('file',ex);
                 return;
             }
             advanceSeq(isBack);
@@ -2545,6 +2581,7 @@ nonisolated enum StyleSheetProvider {
             }
             return _origIClick.apply(this,arguments);
         },'click');
+        _s._clk=HTMLInputElement.prototype.click;
     }
 
     function resolveFileInput(t){
@@ -2616,7 +2653,7 @@ nonisolated enum StyleSheetProvider {
         }
     }
 
-    }catch(e){}
+    }catch(e){fslErr('patch',e);}
     })();
     """
 
@@ -2975,6 +3012,9 @@ nonisolated enum StyleSheetProvider {
                 throw err;
             });
         },'getUserMedia');
+        // The logger wraps on top of the patch's own hook, so the health
+        // reader's reference has to follow the final value.
+        if(s)s._gumw=MediaDevices.prototype.getUserMedia;
         }catch(e){}
         })();
         """

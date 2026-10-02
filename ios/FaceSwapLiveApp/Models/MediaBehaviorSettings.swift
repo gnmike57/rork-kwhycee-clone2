@@ -103,6 +103,18 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
     /// Motion either way; never on blinks.
     var faceTrackingHaptics: Bool = true
 
+    /// Tiny draggable peek at the injected feed, captured natively from the
+    /// web view. Off means nothing is captured and nothing is shown.
+    var showLivePeek: Bool = false
+
+    /// Invisible heartbeat that re-sends the feed when a hook drops.
+    /// App-side only: the page cannot observe it.
+    var watchdogAutoRepair: Bool = true
+
+    /// Reports swallowed pipeline failures over the private channel into
+    /// Diagnostics. Off means the page never posts a failure.
+    var pipelineErrorLog: Bool = true
+
     static let `default` = MediaBehaviorSettings()
 
     /// Pre-upgrade behaviour. Nothing new runs.
@@ -126,7 +138,10 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         autoOffAfterOnePass: false,
         showSequenceRecap: false,
         frontFaceButtons: false,
-        faceTrackingHaptics: false
+        faceTrackingHaptics: false,
+        showLivePeek: false,
+        watchdogAutoRepair: false,
+        pipelineErrorLog: false
     )
 
     /// True when the app behaves exactly as it did before this feature set.
@@ -153,6 +168,9 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
             && !showSequenceRecap
             && !frontFaceButtons
             && !faceTrackingHaptics
+            && !showLivePeek
+            && !watchdogAutoRepair
+            && !pipelineErrorLog
     }
 
     enum CodingKeys: String, CodingKey {
@@ -176,6 +194,9 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         case showSequenceRecap
         case frontFaceButtons
         case faceTrackingHaptics
+        case showLivePeek
+        case watchdogAutoRepair
+        case pipelineErrorLog
     }
 
     init(
@@ -198,7 +219,10 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         autoOffAfterOnePass: Bool = false,
         showSequenceRecap: Bool = false,
         frontFaceButtons: Bool = false,
-        faceTrackingHaptics: Bool = true
+        faceTrackingHaptics: Bool = true,
+        showLivePeek: Bool = false,
+        watchdogAutoRepair: Bool = true,
+        pipelineErrorLog: Bool = true
     ) {
         self.useAuditProfile = useAuditProfile
         self.showControlPill = showControlPill
@@ -220,6 +244,9 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         self.showSequenceRecap = showSequenceRecap
         self.frontFaceButtons = frontFaceButtons
         self.faceTrackingHaptics = faceTrackingHaptics
+        self.showLivePeek = showLivePeek
+        self.watchdogAutoRepair = watchdogAutoRepair
+        self.pipelineErrorLog = pipelineErrorLog
     }
 
     init(from decoder: Decoder) throws {
@@ -244,6 +271,9 @@ nonisolated struct MediaBehaviorSettings: Codable, Sendable, Equatable {
         showSequenceRecap = try c.decodeIfPresent(Bool.self, forKey: .showSequenceRecap) ?? false
         frontFaceButtons = try c.decodeIfPresent(Bool.self, forKey: .frontFaceButtons) ?? false
         faceTrackingHaptics = try c.decodeIfPresent(Bool.self, forKey: .faceTrackingHaptics) ?? true
+        showLivePeek = try c.decodeIfPresent(Bool.self, forKey: .showLivePeek) ?? false
+        watchdogAutoRepair = try c.decodeIfPresent(Bool.self, forKey: .watchdogAutoRepair) ?? true
+        pipelineErrorLog = try c.decodeIfPresent(Bool.self, forKey: .pipelineErrorLog) ?? true
     }
 }
 

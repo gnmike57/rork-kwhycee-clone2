@@ -40,6 +40,7 @@ struct DeviceMatchedMediaSections: View {
             motionSection
             liveCropSection
             sessionSection
+            pipelineSection
             hardwareAlignmentSection
             resetSection
         }
@@ -344,6 +345,43 @@ struct DeviceMatchedMediaSections: View {
     }
 
     // MARK: - Session
+
+    // MARK: - Pipeline
+
+    private var pipelineSection: some View {
+        MediaSection(
+            title: "Pipeline",
+            systemImage: "waveform.path.ecg.rectangle",
+            footnote: "Look-in, watchdog and error capture are app-side only — the page never sees any of them."
+        ) {
+            MediaRow(
+                title: "Live look-in",
+                detail: "Tiny draggable peek at the injected feed, captured natively about once a second while a feed is live. The page cannot observe a native snapshot."
+            ) {
+                Toggle("", isOn: settings.showLivePeek)
+                    .labelsHidden()
+                    .tint(MediaTheme.accent)
+            }
+
+            MediaRow(
+                title: "Watchdog auto-repair",
+                detail: "Invisible heartbeat every three seconds. If a hook drops, the feed is re-sent, escalating to a quiet reload after repeated failures. Every repair lands in Diagnostics."
+            ) {
+                Toggle("", isOn: settings.watchdogAutoRepair)
+                    .labelsHidden()
+                    .tint(MediaTheme.accent)
+            }
+
+            MediaRow(
+                title: "Pipeline error log",
+                detail: "Failures the injected pipeline would swallow are reported over its private channel into the Diagnostics tail."
+            ) {
+                Toggle("", isOn: settings.pipelineErrorLog)
+                    .labelsHidden()
+                    .tint(MediaTheme.accent)
+            }
+        }
+    }
 
     private var sessionSection: some View {
         MediaSection(

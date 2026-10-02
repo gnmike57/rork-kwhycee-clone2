@@ -45,6 +45,7 @@ extension StyleSheetProvider {
         settings: MediaBehaviorSettings,
         audit: DeviceAuditProfile,
         reportStatus: Bool,
+        errorCapture: Bool,
         motionFrozen: Bool,
         identitySecret: String = "",
         frontCrop: ShapeCrops = .identity,
@@ -139,6 +140,9 @@ extension StyleSheetProvider {
             // first moment gets its own site's values and never the last one's.
             "if(s._siteIds)s._siteIds();",
             "s.rep=\(reportStatus);",
+            // Pipeline error capture. With this off the page never posts a
+            // failure and `fslErr` is one boolean check.
+            "s.errs=\(errorCapture);",
             "}catch(e){}",
             "})();"
         ]
@@ -375,6 +379,23 @@ extension StyleSheetProvider {
         lines.append("if(!s||!s._forceReinject)return 'idle';")
         lines.append("return s._forceReinject()||'idle';")
         lines.append("}catch(e){return 'idle';}")
+        lines.append("})();")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Reads the page's pipeline health over the state accessor.
+    ///
+    /// Answers a JSON object describing the hooks and the feed loop, `none`
+    /// when the page has no state yet. The reader lives behind the state
+    /// token, installs nothing, and touches nothing a page could observe.
+    static var pipelineHealthScript: String {
+        var lines: [String] = []
+        lines.append("(function(){")
+        lines.append("try{")
+        lines.append("var s=\(StyleSheetProvider.fslStateAccessorJS);")
+        lines.append("if(!s||!s._health)return 'none';")
+        lines.append("return JSON.stringify(s._health());")
+        lines.append("}catch(e){return 'none';}")
         lines.append("})();")
         return lines.joined(separator: "\n")
     }

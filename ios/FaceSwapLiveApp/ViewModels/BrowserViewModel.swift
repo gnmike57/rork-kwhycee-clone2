@@ -182,6 +182,8 @@ final class BrowserViewModel {
     var activeProfile: DeviceProfile?
     let videoLibrary = VideoLibraryService()
     let constraintLog = ConstraintLogService()
+    /// Live tail of pipeline errors and repairs, shown in Diagnostics.
+    let pipelineLog = PipelineLogStore()
     let siteHistory = SiteHistoryService()
     let downloadService = DownloadService()
 
@@ -1009,6 +1011,7 @@ final class BrowserViewModel {
             settings: behavior.settings,
             audit: behavior.audit,
             reportStatus: shouldReportStatus,
+            errorCapture: behavior.settings.pipelineErrorLog,
             motionFrozen: isMotionFrozen,
             identitySecret: behavior.settings.useAuditProfile ? behavior.identitySecret : "",
             frontCrop: frontCrop,
@@ -1066,6 +1069,114 @@ final class BrowserViewModel {
         // Grants may have been revoked by the change, so push this site's fresh
         // answer instead of letting the old one linger.
         applySiteState()
+    }
+
+    // MARK: - Pipeline health
+
+    /// What the last page status message said, so the indicator can tell a
+    /// live feed from a silent one. Any status message proves the patch is
+    /// still alive on this page.
+    private(set) var lastStatusAt: Date?
+    /// The most recent heartbeat answer from the page.
+    private(set) var lastHealth: PipelineHealth?
+    /// Consecutive watchdog ticks that found a dropped hook.
+    private var pipelineRepairStreak: Int = 0
+    private var watchdogTask: Task<Void, Never>?
+
+    /// Latest native snapshot of the page, for the tiny look-in. Captured
+    /// with the web view's own snapshot API, which the page cannot observe.
+    private(set) var peekFrame: UIImage?
+
+    /// The dot beside the pill. Green feed flowing, amber requested-but-silent,
+    /// red hooks lost, grey no media — read from state this view model already
+    /// holds, so it adds no new traffic.
+    var pipelineIndicator: PipelineIndicator {
+        guard isMediaActive, hasSource else { return .off }
+        if pipelineRepairStreak > 0 { return .lost }
+        if let health = lastHealth, health.hasDroppedHook { return .lost }
+        if isLiveStreamActive {
+            if let at = lastStatusAt, Date().timeIntervalSince(at) < 8 { return .flowing }
+            return .silent
+        }
+        return .silent
+    }
+
+    /// The page is going away: its status answers and health belonged to it.
+    func notePipelinePageChange() {
+        lastStatusAt = nil
+        lastHealth = nil
+        pipelineRepairStreak = 0
+    }
+
+    /// Starts the heartbeat once; every tick re-checks its own conditions.
+    private func ensurePipelineWatchdog() {
+        guard watchdogTask == nil else { return }
+        watchdogTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard let self, !Task.isCancelled else { return }
+                self.runPipelineWatchdogTick()
+            }
+        }
+    }
+
+    /// One heartbeat. Asks the page for its own health and repairs silently.
+    private func runPipelineWatchdogTick() {
+        guard behavior.settings.watchdogAutoRepair else { return }
+        guard isMediaActive, hasSource, let webView else {
+            pipelineRepairStreak = 0
+            return
+        }
+        webView.evaluateJavaScript(StyleSheetProvider.pipelineHealthScript) { [weak self] result, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let raw = (result as? String) ?? "none"
+                guard raw != "none",
+                      let data = raw.data(using: .utf8),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+                let health = PipelineHealth(
+                    feedActive: (dict["a"] as? Int ?? 0) == 1,
+                    getUserMediaHooked: (dict["gum"] as? Int ?? 0) == 1,
+                    enumerateDevicesHooked: (dict["enu"] as? Int ?? 0) == 1,
+                    clickHooked: (dict["clk"] as? Int ?? 1) == 1,
+                    liveFeed: (dict["live"] as? Int ?? 0) == 1,
+                    frozen: (dict["frz"] as? Int ?? 0) == 1,
+                    loopIdleMs: dict["tick"] as? Int ?? 0,
+                    hardened: (dict["hard"] as? Int ?? 0) == 1
+                )
+                self.lastHealth = health
+                guard health.feedActive else {
+                    self.pipelineRepairStreak = 0
+                    return
+                }
+                guard health.hasDroppedHook else {
+                    self.pipelineRepairStreak = 0
+                    return
+                }
+                self.pipelineRepairStreak += 1
+                let site = self.currentURL?.host() ?? ""
+                if self.pipelineRepairStreak == 1 {
+                    self.pipelineLog.addRepair(site: site, "A hook dropped on the page — re-sending the feed.")
+                    self.forceReinject()
+                } else if self.pipelineRepairStreak >= 3 {
+                    self.pipelineRepairStreak = 0
+                    self.pipelineLog.addRepair(site: site, "The page kept losing its hooks — reloading it quietly.")
+                    self.webView?.reload()
+                }
+            }
+        }
+    }
+
+    /// One look-in frame. A failed page snapshot falls back to a native mirror
+    /// of the media being served, so the thumbnail never goes blank mid-feed.
+    func capturePeekFrame() {
+        guard behavior.settings.showLivePeek, isMediaActive, hasSource, let webView else { return }
+        webView.takeSnapshot(with: nil) { [weak self] image, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.peekFrame = image ?? self.sourceImage
+            }
+        }
     }
 
     // MARK: - Freeze
@@ -1274,6 +1385,17 @@ final class BrowserViewModel {
     /// Status ping from the page: which camera is being pulled, and where the
     /// queues currently sit. Only sent while the pill is switched on.
     func handleStatusMessage(_ payload: [String: Any]) {
+        // Pipeline error capture: a swallowed page-side failure, posted over
+        // the private channel. Nothing else in this payload is meaningful.
+        if payload["err"] as? Bool == true {
+            let whereTag = payload["w"] as? String ?? "page"
+            let message = payload["m"] as? String ?? "unknown"
+            pipelineLog.addError(site: currentURL?.host() ?? "", "\(whereTag): \(message)")
+            return
+        }
+        ensurePipelineWatchdog()
+        // Any other message proves the patch is alive on this page.
+        lastStatusAt = Date()
         if let refused = payload["refused"] as? String {
             let name = payload["name"] as? String ?? "OverconstrainedError"
             let message = payload["message"] as? String ?? "Invalid constraint"
@@ -1536,6 +1658,7 @@ final class BrowserViewModel {
     }
 
     func syncMediaToPage() {
+        ensurePipelineWatchdog()
         guard let webView else { return }
 
         if frontSourceType == .video, let url = frontVideoURL {

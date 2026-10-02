@@ -158,6 +158,14 @@ struct MediaControlPill: View {
                 )
         )
         .clipShape(.capsule)
+        // The pipeline dot sits just outside the capsule's top edge — beside
+        // the pill, not inside it, and never under a press.
+        .overlay(alignment: .top) {
+            PipelineDot(state: viewModel.pipelineIndicator)
+                .offset(y: -11)
+                .allowsHitTesting(false)
+        }
+        .animation(.easeOut(duration: 0.25), value: viewModel.pipelineIndicator)
         .shadow(color: .black.opacity(0.42), radius: isDragging ? 22 : 14, y: isDragging ? 12 : 7)
         .scaleEffect(isDragging ? 1.05 : 1)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isDragging)

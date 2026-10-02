@@ -204,6 +204,11 @@ struct BrowserContentView: View {
                 }
             }
 
+            if viewModel.behavior.settings.showLivePeek, viewModel.currentURL != nil {
+                LivePeekView(viewModel: viewModel)
+                    .transition(.opacity)
+            }
+
             if shouldShowHUD, let snapshot = viewModel.observedFeed {
                 VStack {
                     HStack {

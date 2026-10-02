@@ -22,6 +22,7 @@ struct DiagnosticsView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     sessionDiagnosticsSection
+                    pipelineSection
                     if LivingStills.isAvailable {
                         faceTrackingSection
                     }
@@ -41,6 +42,93 @@ struct DiagnosticsView: View {
             .navigationTitle("Diagnostics")
         }
         .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Pipeline
+
+    private var pipelineSection: some View {
+        sectionCard("Pipeline", icon: "waveform.path.ecg.rectangle", sectionID: "pipeline") {
+            if let viewModel {
+                VStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        PipelineDot(state: viewModel.pipelineIndicator)
+                        Text(viewModel.pipelineIndicator.label)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        if let health = viewModel.lastHealth {
+                            Text(health.hasDroppedHook ? "Hook check failed" : "Hooks intact")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("No heartbeat yet")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Divider()
+                    if viewModel.pipelineLog.events.isEmpty {
+                        Text("No pipeline events yet. Failures the injected pipeline swallows land here, newest first.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(viewModel.pipelineLog.events.prefix(40)) { event in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: pipelineEventIcon(event.kind))
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(pipelineEventTint(event.kind))
+                                    .frame(width: 14)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(event.message)
+                                        .font(.caption)
+                                        .foregroundStyle(.primary)
+                                    HStack(spacing: 6) {
+                                        if !event.site.isEmpty {
+                                            Text(event.site)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(event.date, style: .time)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }
+                        }
+                        Button {
+                            viewModel.pipelineLog.clear()
+                        } label: {
+                            Text("Clear")
+                                .font(.caption.weight(.semibold))
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .background(.white.opacity(0.06), in: .rect(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } else {
+                Text("Open Diagnostics from the browser to see the live pipeline tail.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func pipelineEventIcon(_ kind: PipelineEvent.Kind) -> String {
+        switch kind {
+        case .error: "exclamationmark.triangle.fill"
+        case .repair: "arrow.triangle.2.circlepath"
+        case .info: "info.circle"
+        }
+    }
+
+    private func pipelineEventTint(_ kind: PipelineEvent.Kind) -> Color {
+        switch kind {
+        case .error: .red
+        case .repair: .orange
+        case .info: .secondary
+        }
     }
 
     // MARK: - Session Diagnostics
