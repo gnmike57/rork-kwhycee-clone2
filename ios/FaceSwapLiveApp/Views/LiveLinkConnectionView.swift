@@ -1,12 +1,12 @@
 import SwiftUI
 import UIKit
 
-/// The dedicated Live Link Face connection hub: everything about linking a
-/// second iPhone in one place — live status, the address to stream to, port
-/// settings, packet health, a listener self-test and adaptive troubleshooting.
+/// The Live Link tab: everything about face tracking and linking a second
+/// iPhone in one place — live status, a live meter, the address to stream to,
+/// port settings, packet health, a listener self-test, state-aware help and a
+/// setup guide that ticks itself off.
 ///
-/// Presented as a push from Diagnostics and from the Face Tracking sheet, so
-/// it never brings its own navigation stack.
+/// The tab root owns the navigation stack, so this view never brings its own.
 struct LiveLinkConnectionView: View {
     @Environment(FaceTrackingController.self) private var tracking
 
@@ -20,23 +20,33 @@ struct LiveLinkConnectionView: View {
         ScrollView {
             VStack(spacing: 14) {
                 statusHero
+                if !LivingStills.isAvailable {
+                    unavailableCard
+                }
+                hintCard
+                controlsCard
+                if tracking.state.isSourceActive {
+                    LiveFaceMeterCard()
+                }
                 if tracking.mode == .secondPhone {
-                    controlsCard
                     addressCard
                     selfTestCard
                     healthCard
                     troubleshootingCard
+                    setupGuideCard
                 } else {
                     thisPhoneCard
                 }
-                setupGuideCard
+                FaceTrackingEngineerCard()
                 settingsRow
             }
             .padding(16)
+            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: tracking.state)
+            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: tracking.mode)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Color(.systemGroupedBackground))
-        .navigationTitle("Live Link Face")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Live Link")
         .onAppear {
             if portText.isEmpty { portText = String(tracking.port) }
             settleChosenAddress(tracking.addresses)
@@ -108,53 +118,35 @@ struct LiveLinkConnectionView: View {
     // MARK: - Connection controls
 
     private var controlsCard: some View {
-        @Bindable var tracking = tracking
+        let isLink = tracking.mode == .secondPhone
 
         return VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Connection", icon: "power")
+            sectionHeader(isLink ? "Connection" : "Tracking", icon: "power")
 
-            HStack(spacing: 12) {
-                Text("Port")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                TextField("11111", text: $portText)
-                    .keyboardType(.numberPad)
-                    .font(.subheadline.monospacedDigit())
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 96)
-                    .submitLabel(.done)
-                    .onSubmit(applyPort)
-                if isPortEdited {
-                    Button("Apply", action: applyPort)
-                        .font(.caption.weight(.bold))
-                        .buttonStyle(.borderedProminent)
-                        .tint(.cyan)
+            Toggle(isOn: Binding(
+                get: { tracking.isEnabled },
+                set: { isOn in
+                    Haptics.tick()
+                    tracking.isEnabled = isOn
                 }
-                Spacer()
-                Toggle("Listen", isOn: $tracking.isEnabled)
-                    .font(.subheadline.weight(.semibold))
-                    .tint(.green)
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isLink ? "Listen for Live Link Face" : "Track my face")
+                        .font(.subheadline.weight(.semibold))
+                    Text(isLink
+                         ? "Runs while a still is on a live feed."
+                         : "Uses this phone's front camera while a still is on a live feed.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .tint(.green)
+            .disabled(!LivingStills.isAvailable)
             .frame(minHeight: 44)
 
-            if let portError {
-                Text(portError)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.orange)
-            }
-
-            HStack {
-                Button {
-                    Haptics.tick()
-                    portText = String(LiveLinkFacePacket.defaultPort)
-                    applyPort()
-                } label: {
-                    Label("Reset to \(LiveLinkFacePacket.defaultPort)", systemImage: "arrow.counterclockwise")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.cyan)
-                }
-                .buttonStyle(.plain)
-                Spacer()
+            if isLink {
+                Divider()
+                portRow
             }
 
             if case .unavailable = tracking.state {
@@ -170,12 +162,159 @@ struct LiveLinkConnectionView: View {
                 .buttonStyle(.plain)
             }
 
-            Text("Changing the port restarts the listener. It takes effect on Apply, not per keystroke.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
         .padding(14)
         .faceGlass(cornerRadius: 14)
+    }
+
+    private var portRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("Port")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                TextField("11111", text: $portText)
+                    .keyboardType(.numberPad)
+                    .font(.subheadline.monospacedDigit())
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 92)
+                    .submitLabel(.done)
+                    .onSubmit(applyPort)
+                if isPortEdited {
+                    Button("Apply", action: applyPort)
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.borderedProminent)
+                        .tint(.cyan)
+                        .transition(.scale.combined(with: .opacity))
+                }
+                Spacer()
+                if tracking.port != LiveLinkFacePacket.defaultPort {
+                    Button {
+                        Haptics.tick()
+                        portText = String(LiveLinkFacePacket.defaultPort)
+                        applyPort()
+                    } label: {
+                        Label("Reset", systemImage: "arrow.counterclockwise")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.cyan)
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Reset port to \(LiveLinkFacePacket.defaultPort)")
+                }
+            }
+            .frame(minHeight: 44)
+            .animation(.snappy, value: isPortEdited)
+
+            if let portError {
+                Text(portError)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+            }
+
+            Text("Changing the port restarts the listener, so it applies on Apply, not per keystroke.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - State-aware hint
+
+    private struct Hint {
+        let icon: String
+        let tint: Color
+        let title: String
+        let text: String
+    }
+
+    private var hint: Hint? {
+        let isLink = tracking.mode == .secondPhone
+        switch tracking.state {
+        case .off:
+            return Hint(icon: "power", tint: .secondary, title: "Tracking is off",
+                        text: isLink
+                        ? "Switch on Listen below. The listener starts once a still is on a live feed."
+                        : "Switch on Track my face below. The camera starts once a still is on a live feed.")
+        case .standby:
+            if tracking.isCameraNeededElsewhere {
+                return Hint(icon: "camera", tint: .orange, title: "The Preview tab has the camera",
+                            text: "Leave the Preview tab and tracking picks up again. Second iPhone mode needs no camera here.")
+            }
+            if !tracking.isForeground {
+                return Hint(icon: "moon", tint: .secondary, title: "Paused in the background",
+                            text: "Tracking resumes when the app is back on screen.")
+            }
+            return Hint(icon: "photo.on.rectangle", tint: .orange, title: "Waiting for a still on a live feed",
+                        text: "In My Media, put a photo on a slot, then open a site in Browser that uses the camera. Tracking starts on its own.")
+        case .starting:
+            return Hint(icon: "hourglass", tint: .cyan, title: "Starting", text: "Just a moment.")
+        case .listening:
+            return Hint(icon: "antenna.radiowaves.left.and.right", tint: .orange, title: "Listening, no packets yet",
+                        text: "On the other iPhone, add the address below as a target in Live Link Face and tap LIVE.")
+        case .searching:
+            return Hint(icon: "faceid", tint: .orange, title: "Looking for your face",
+                        text: "Face the front camera in good light.")
+        case .receiving where !tracking.hasLiveFace:
+            return Hint(icon: "face.dashed", tint: .orange, title: "Packets arriving, no face",
+                        text: "Live Link Face is streaming but can't see a face. Point its front camera at a face.")
+        case .receiving where tracking.isExpressionOnly:
+            return Hint(icon: "rotate.3d", tint: .orange, title: "Head turns are missing",
+                        text: "Turn on Stream Head Rotation in Live Link Face's settings.")
+        case .live, .receiving:
+            return nil
+        case .lost:
+            return Hint(icon: "arrow.triangle.2.circlepath", tint: .orange, title: "Lost, idling",
+                        text: isLink
+                        ? "The stream went quiet. Check the sender is still LIVE and its screen is awake."
+                        : "Your face left the frame. The still idles until it's back.")
+        case .unavailable(.cameraDenied):
+            return Hint(icon: "camera.badge.ellipsis", tint: .red, title: "Camera access is off",
+                        text: "Allow the camera in iPhone Settings, or use Second iPhone mode.")
+        case .unavailable(.notSupported):
+            return Hint(icon: "iphone.slash", tint: .red, title: "Not supported here",
+                        text: "This iPhone can't track faces itself. Use Second iPhone mode with Live Link Face.")
+        case .unavailable(.portInUse(let port)):
+            return Hint(icon: "exclamationmark.triangle", tint: .red, title: "Port \(port) is busy",
+                        text: "Pick another port below, tap Apply, then Try again.")
+        case .unavailable(.failed(let reason)):
+            return Hint(icon: "exclamationmark.triangle", tint: .red, title: "Couldn't start", text: reason)
+        }
+    }
+
+    @ViewBuilder
+    private var hintCard: some View {
+        if let hint {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: hint.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(hint.tint)
+                    .frame(width: 34, height: 34)
+                    .background(hint.tint.opacity(0.14), in: .circle)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(hint.title)
+                        .font(.subheadline.weight(.semibold))
+                    Text(hint.text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .faceGlass(cornerRadius: 14)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+    }
+
+    private var unavailableCard: some View {
+        Label("Living stills are turned off in this build, so tracking can't be switched on.",
+              systemImage: "lock.fill")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .faceGlass(cornerRadius: 14)
     }
 
     private func applyPort() {
@@ -484,28 +623,66 @@ struct LiveLinkConnectionView: View {
 
     // MARK: - Setup guide
 
-    private let setupSteps: [String] = [
-        "Install Live Link Face (iPhone 12 or newer).",
-        "Join the same Wi-Fi — or this phone's Personal Hotspot.",
-        "Add a target with this address and port.",
-        "Set Capture Mode: ARKit.",
-        "Turn on Stream Head Rotation.",
-        "Allow Local Network on that phone.",
-        "Tap LIVE.",
-    ]
+    private struct SetupStep {
+        let text: String
+        /// True once the app can see this step is done; nil when it can't tell.
+        let isDone: Bool?
+    }
+
+    private var setupSteps: [SetupStep] {
+        let packetsArrived = tracking.packetHealth.packetCount > 0 || tracking.state == .receiving
+        let faceArrived = packetsArrived && tracking.hasLiveFace
+        return [
+            SetupStep(text: "Install Live Link Face (iPhone 12 or newer).", isDone: packetsArrived ? true : nil),
+            SetupStep(text: "Join the same Wi-Fi, or this phone's Personal Hotspot.",
+                      isDone: tracking.addresses.isEmpty ? false : true),
+            SetupStep(text: "Switch on Listen above.", isDone: tracking.isEnabled),
+            SetupStep(text: "In Live Link Face, add a target with this address and port.", isDone: packetsArrived ? true : nil),
+            SetupStep(text: "Allow Local Network on that phone, set Capture Mode to ARKit and tap LIVE.",
+                      isDone: packetsArrived),
+            SetupStep(text: "Point its front camera at a face.", isDone: faceArrived),
+            SetupStep(text: "Turn on Stream Head Rotation.", isDone: faceArrived ? !tracking.isExpressionOnly : nil),
+        ]
+    }
 
     private var setupGuideCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Setup guide", icon: "list.number")
-            ForEach(Array(setupSteps.enumerated()), id: \.offset) { index, step in
+        let steps = setupSteps
+        let doneCount = steps.filter { $0.isDone == true }.count
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionHeader("Setup guide", icon: "list.number")
+                Spacer()
+                Text("\(doneCount) of \(steps.count)")
+                    .font(.caption2.weight(.bold).monospacedDigit())
+                    .foregroundStyle(doneCount == steps.count ? .green : .secondary)
+                    .contentTransition(.numericText())
+            }
+            ProgressView(value: Double(doneCount), total: Double(steps.count))
+                .tint(doneCount == steps.count ? .green : .cyan)
+                .animation(.spring(response: 0.5, dampingFraction: 0.8), value: doneCount)
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                 HStack(alignment: .top, spacing: 10) {
-                    Text("\(index + 1)")
-                        .font(.caption2.weight(.heavy))
-                        .foregroundStyle(.cyan)
-                        .frame(width: 20, height: 20)
-                        .background(.cyan.opacity(0.14), in: .circle)
-                    Text(step)
+                    ZStack {
+                        if step.isDone == true {
+                            Image(systemName: "checkmark")
+                                .font(.caption2.weight(.heavy))
+                                .foregroundStyle(.black)
+                                .frame(width: 20, height: 20)
+                                .background(.green, in: .circle)
+                                .transition(.scale.combined(with: .opacity))
+                        } else {
+                            Text("\(index + 1)")
+                                .font(.caption2.weight(.heavy))
+                                .foregroundStyle(step.isDone == false ? .orange : .cyan)
+                                .frame(width: 20, height: 20)
+                                .background((step.isDone == false ? Color.orange : Color.cyan).opacity(0.14), in: .circle)
+                        }
+                    }
+                    .animation(.spring(response: 0.35, dampingFraction: 0.7), value: step.isDone)
+                    Text(step.text)
                         .font(.caption)
+                        .foregroundStyle(step.isDone == true ? .secondary : .primary)
+                        .strikethrough(step.isDone == true, color: .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -515,6 +692,7 @@ struct LiveLinkConnectionView: View {
         }
         .padding(14)
         .faceGlass(cornerRadius: 14)
+        .sensoryFeedback(.success, trigger: doneCount == steps.count) { _, isComplete in isComplete }
     }
 
     // MARK: - Settings & privacy
