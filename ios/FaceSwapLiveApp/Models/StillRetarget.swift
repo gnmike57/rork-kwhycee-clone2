@@ -10,6 +10,12 @@ nonisolated struct StillDrive: Equatable, Sendable {
     var rightLid: Float
     var jawOpen: Float
     var showTeeth: Bool
+    /// Average smile after strength — drives the fold and flush shading.
+    var smile: Float = 0
+    /// Average eye squint after strength — drives the crow's feet.
+    var squint: Float = 0
+    /// The rPPG brightness signal for this frame, set by the draw loop.
+    var pulse: Float = 0
 
     static let empty = StillDrive(vertices: [], leftLid: 0, rightLid: 0, jawOpen: 0, showTeeth: false)
 }
@@ -75,12 +81,16 @@ nonisolated enum StillRetarget {
         }
 
         let jaw = min(1, max(0, Double(scaled[.jawOpen]) * (1 - 0.45 * Double(scaled[.mouthClose]))))
+        let smile = max(0, (scaled[.mouthSmileLeft] + scaled[.mouthSmileRight]) * 0.5)
+        let squint = max(0, (scaled[.eyeSquintLeft] + scaled[.eyeSquintRight]) * 0.5)
         return StillDrive(
             vertices: moved,
             leftLid: lid(scaled, blink: .eyeBlinkLeft, squint: .eyeSquintLeft, wide: .eyeWideLeft),
             rightLid: lid(scaled, blink: .eyeBlinkRight, squint: .eyeSquintRight, wide: .eyeWideRight),
             jawOpen: Float(jaw),
-            showTeeth: rig.teethVisible && jaw > 0.04
+            showTeeth: rig.teethVisible && jaw > 0.04,
+            smile: min(1, smile),
+            squint: min(1, squint)
         )
     }
 
@@ -98,7 +108,10 @@ nonisolated enum StillRetarget {
             leftLid: mix(start.leftLid, end.leftLid, Float(t)),
             rightLid: mix(start.rightLid, end.rightLid, Float(t)),
             jawOpen: mix(start.jawOpen, end.jawOpen, Float(t)),
-            showTeeth: t < 0.5 ? start.showTeeth : end.showTeeth
+            showTeeth: t < 0.5 ? start.showTeeth : end.showTeeth,
+            smile: mix(start.smile, end.smile, Float(t)),
+            squint: mix(start.squint, end.squint, Float(t)),
+            pulse: mix(start.pulse, end.pulse, Float(t))
         )
     }
 
@@ -179,11 +192,12 @@ nonisolated enum StillRetarget {
         let jawSide = (value(pose, .jawLeft) - value(pose, .jawRight)) * 0.04 * mouthScale
         let puff = value(pose, .cheekPuff)
 
-        put(.mouthLeft, 0.045 * smileL + 0.03 * stretchL - 0.035 * pucker, -0.07 * smileL + 0.045 * frownL)
-        put(.mouthRight, -0.045 * smileR - 0.03 * stretchR + 0.035 * pucker, -0.07 * smileR + 0.045 * frownR)
-        put(.upperLip, 0, -0.02 * (smileL + smileR) / 2 + 0.025 * funnel)
-        put(.lowerLip, jawSide * 0.35, jaw * 0.11 + 0.02 * funnel)
-        put(.chin, jawSide, jaw * 0.16)
+        let smile = (smileL + smileR) / 2
+        put(.mouthLeft, 0.058 * smileL + 0.03 * stretchL - 0.035 * pucker, -0.085 * smileL + 0.045 * frownL)
+        put(.mouthRight, -0.058 * smileR - 0.03 * stretchR + 0.035 * pucker, -0.085 * smileR + 0.045 * frownR)
+        put(.upperLip, 0, -0.028 * smile + 0.025 * funnel)
+        put(.lowerLip, jawSide * 0.35, jaw * 0.11 + 0.02 * funnel + 0.012 * smile)
+        put(.chin, jawSide, jaw * 0.16 - 0.008 * smile)
         add(.leftJaw, puff * 0.03 + jawSide * 0.4, jaw * 0.04)
         add(.rightJaw, -puff * 0.03 + jawSide * 0.4, jaw * 0.04)
 

@@ -89,11 +89,13 @@ enum StillRenderer {
         }
         var pixelSize = SIMD2<Float>(Float(width), Float(height))
         var dark = bakedDark(image: cgImage, rig: rig)
+        var uniforms = warpUniforms(drive: drive, rig: rig)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         encoder.setVertexBytes(&pixelSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
         encoder.setFragmentTexture(texture, index: 0)
         encoder.setFragmentBytes(&dark, length: MemoryLayout<SIMD3<Float>>.stride, index: 0)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<WarpUniforms>.stride, index: 1)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: vertices.count)
         encoder.endEncoding()
         buffer.commit()
@@ -135,6 +137,7 @@ enum StillRenderer {
             let canvas = context.cgContext
             drawMouth(canvas, image: cgImage, drive: drive, rig: rig, width: width, height: height)
             drawLids(canvas, drive: drive, rig: rig, width: width, height: height)
+            drawSmile(canvas, drive: drive, rig: rig, width: width, height: height)
         }
         return rendered
     }
@@ -192,6 +195,102 @@ enum StillRenderer {
         canvas.fillEllipse(in: rect)
     }
 
+    /// Anchors and intensities for the fragment-side smile shading and the
+    /// rPPG tint. Anchors are the photo's rest positions in UV space; without
+    /// them the expression shading stays off and only the pulse rides.
+    private static func warpUniforms(drive: StillDrive, rig: FaceRig) -> WarpUniforms {
+        var uniforms = WarpUniforms(
+            smile: 0, squint: 0, pulse: drive.pulse,
+            scale: Float(max(0.16, rig.rest.faceHeight)),
+            mouthLeft: .zero, mouthRight: .zero, upperLip: .zero,
+            leftEyeOuter: .zero, rightEyeOuter: .zero
+        )
+        let needed: [FaceHandle] = [.mouthLeft, .mouthRight, .upperLip, .leftEyeOuter, .rightEyeOuter]
+        guard needed.allSatisfy({ rig.handleIndex[$0] != nil }) else { return uniforms }
+        func uv(_ handle: FaceHandle) -> SIMD2<Float> {
+            guard let index = rig.handleIndex[handle], rig.vertices.indices.contains(index) else { return .zero }
+            return SIMD2(Float(rig.vertices[index].x), Float(rig.vertices[index].y))
+        }
+        uniforms.smile = drive.smile
+        uniforms.squint = drive.squint
+        uniforms.mouthLeft = uv(.mouthLeft)
+        uniforms.mouthRight = uv(.mouthRight)
+        uniforms.upperLip = uv(.upperLip)
+        uniforms.leftEyeOuter = uv(.leftEyeOuter)
+        uniforms.rightEyeOuter = uv(.rightEyeOuter)
+        return uniforms
+    }
+
+    /// CPU-fallback smile shading: soft fold and crow's-feet strokes plus a
+    /// flush gradient. The Metal path does this procedurally per pixel.
+    private static func drawSmile(_ canvas: CGContext, drive: StillDrive, rig: FaceRig, width: Int, height: Int) {
+        guard drive.smile > 0.05,
+              let mouthL = point(.mouthLeft, drive: drive, rig: rig, width: width, height: height),
+              let mouthR = point(.mouthRight, drive: drive, rig: rig, width: width, height: height),
+              let lip = point(.upperLip, drive: drive, rig: rig, width: width, height: height),
+              let eyeL = point(.leftEyeOuter, drive: drive, rig: rig, width: width, height: height),
+              let eyeR = point(.rightEyeOuter, drive: drive, rig: rig, width: width, height: height)
+        else { return }
+        let scale = CGFloat(max(0.16, rig.rest.faceHeight)) * CGFloat(height)
+        canvas.saveGState()
+        canvas.setLineCap(.round)
+
+        // Nasolabial folds: from beside the nose, curving past the mouth corner.
+        for (corner, side) in [(mouthL, CGFloat(-1)), (mouthR, CGFloat(1))] {
+            let wing = CGPoint(x: lip.x + (corner.x - lip.x) * 0.5, y: lip.y - scale * 0.05)
+            let end = CGPoint(x: corner.x + side * scale * 0.03, y: corner.y + scale * 0.02)
+            let mid = CGPoint(x: (wing.x + end.x) / 2 + side * scale * 0.015, y: (wing.y + end.y) / 2)
+            let path = CGMutablePath()
+            path.move(to: wing)
+            path.addQuadCurve(to: end, control: mid)
+            canvas.addPath(path)
+            canvas.setStrokeColor(UIColor(white: 0.08, alpha: CGFloat(drive.smile) * 0.15).cgColor)
+            canvas.setLineWidth(max(1, scale * 0.02))
+            canvas.setShadow(offset: .zero, blur: scale * 0.02)
+            canvas.strokePath()
+        }
+
+        // Crow's feet radiating from the outer eye corners.
+        let squint = CGFloat(min(1, drive.squint + drive.smile * 0.45))
+        if squint > 0.05 {
+            for (eye, side) in [(eyeL, CGFloat(-1)), (eyeR, CGFloat(1))] {
+                for spread in stride(from: CGFloat(-0.4), through: 0.4, by: 0.4) {
+                    canvas.move(to: eye)
+                    canvas.addLine(to: CGPoint(
+                        x: eye.x + side * cos(spread) * scale * 0.055,
+                        y: eye.y + (sin(spread) * 0.6 + 0.35) * scale * 0.055
+                    ))
+                }
+                canvas.setStrokeColor(UIColor(white: 0.1, alpha: squint * 0.12).cgColor)
+                canvas.setLineWidth(max(0.8, scale * 0.008))
+                canvas.setShadow(offset: .zero, blur: scale * 0.012)
+                canvas.strokePath()
+            }
+        }
+
+        // The flush a smile brings to the cheeks.
+        for (corner, eye) in [(mouthL, eyeL), (mouthR, eyeR)] {
+            let cheek = CGPoint(x: (corner.x + eye.x) / 2, y: (corner.y + eye.y) / 2)
+            let colors = [
+                UIColor(red: 0.92, green: 0.38, blue: 0.32, alpha: CGFloat(drive.smile) * 0.05).cgColor,
+                UIColor(red: 0.92, green: 0.38, blue: 0.32, alpha: 0).cgColor
+            ] as CFArray
+            if let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors,
+                locations: [0, 1]
+            ) {
+                canvas.drawRadialGradient(
+                    gradient,
+                    startCenter: cheek, startRadius: 0,
+                    endCenter: cheek, endRadius: scale * 0.16,
+                    options: []
+                )
+            }
+        }
+        canvas.restoreGState()
+    }
+
     // MARK: - Mesh
 
     private static func meshVertices(drive: StillDrive, rig: FaceRig, size: CGSize) -> [WarpVertex] {
@@ -202,7 +301,7 @@ enum StillRenderer {
         var vertices: [WarpVertex] = []
         vertices.append(contentsOf: quad(
             (0, 0, 0, 0), (width, 0, 1, 0), (0, height, 0, 1), (width, height, 1, 1),
-            shade: 0, mouth: 0
+            shade: 0, mouth: 0, skin: 0
         ))
         if drive.jawOpen > 0.02,
            let mouth = mouthQuad(drive: drive, rig: rig, rest: rest, width: width, height: height) {
@@ -219,7 +318,8 @@ enum StillRenderer {
                     position: SIMD2(Float(position.x) * width, Float(position.y) * height),
                     uv: SIMD2(Float(sample.x), Float(sample.y)),
                     shade: shades[index],
-                    mouth: 0
+                    mouth: 0,
+                    skin: 1
                 ))
             }
         }
@@ -238,7 +338,8 @@ enum StillRenderer {
                 position: SIMD2(Float(position.x) * width, Float(position.y) * height),
                 uv: SIMD2(Float(sample.x), Float(sample.y)),
                 shade: 0,
-                mouth: mouth
+                mouth: mouth,
+                skin: 1
             )
         }
         let left = vertex(indices[0])
@@ -269,10 +370,11 @@ enum StillRenderer {
         _ c: (Float, Float, Float, Float),
         _ d: (Float, Float, Float, Float),
         shade: Float,
-        mouth: Float
+        mouth: Float,
+        skin: Float
     ) -> [WarpVertex] {
         func vertex(_ value: (Float, Float, Float, Float)) -> WarpVertex {
-            WarpVertex(position: SIMD2(value.0, value.1), uv: SIMD2(value.2, value.3), shade: shade, mouth: mouth)
+            WarpVertex(position: SIMD2(value.0, value.1), uv: SIMD2(value.2, value.3), shade: shade, mouth: mouth, skin: skin)
         }
         return [vertex(a), vertex(b), vertex(c), vertex(b), vertex(d), vertex(c)]
     }
@@ -347,10 +449,25 @@ enum StillRenderer {
     }
 }
 
-/// Matches the Metal vertex. 24 bytes, no padding.
+/// Matches the Metal vertex. 28 bytes, no padding.
 struct WarpVertex {
     var position: SIMD2<Float>
     var uv: SIMD2<Float>
     var shade: Float
     var mouth: Float
+    /// 1 on the face mesh, 0 on the background — masks the shading effects.
+    var skin: Float
+}
+
+/// Mirrors WarpUniforms in StillWarp.metal — keep both in step.
+struct WarpUniforms {
+    var smile: Float
+    var squint: Float
+    var pulse: Float
+    var scale: Float
+    var mouthLeft: SIMD2<Float>
+    var mouthRight: SIMD2<Float>
+    var upperLip: SIMD2<Float>
+    var leftEyeOuter: SIMD2<Float>
+    var rightEyeOuter: SIMD2<Float>
 }

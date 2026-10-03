@@ -13,6 +13,7 @@ final class LivingStillDriver {
     private let server = StillFrameServer()
     private var task: Task<Void, Never>?
     private var previous: StillDrive?
+    private var heartbeat = HeartbeatSignal()
     private var attached = false
     private var pollInFlight = false
     private var pollMisses = 0
@@ -77,7 +78,10 @@ final class LivingStillDriver {
             strength: strength,
             headPosePresent: !tracking.isExpressionOnly
         )
-        let frame = previous.map { StillRetarget.blended($0, drive, amount: 0.65) } ?? drive
+        var frame = previous.map { StillRetarget.blended($0, drive, amount: 0.65) } ?? drive
+        // The skin's colour rhythm rides the rendered frame; the expression
+        // blend stays pulse-free so the heartbeat never smooths.
+        frame.pulse = heartbeat.sample(at: FaceClock.now())
         previous = drive
 
         let wantsPage = shouldFeedPage(tracking: tracking, strength: strength, drive: drive, rig: rig)
