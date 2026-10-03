@@ -135,7 +135,7 @@ struct FrameReadinessRow: View {
     var compact: Bool = false
 
     var body: some View {
-        HStack(spacing: compact ? 5 : 7) {
+        WrappingRow(spacing: compact ? 5 : 7, lineSpacing: compact ? 4 : 6) {
             ForEach(items) { item in
                 HStack(spacing: 3) {
                     Image(systemName: item.systemImage)
@@ -144,6 +144,8 @@ struct FrameReadinessRow: View {
                         .font(.system(size: compact ? 8 : 9, weight: .semibold, design: .monospaced))
                 }
                 .foregroundStyle(FrameCheckTheme.color(for: item.kind))
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, compact ? 5 : 6)
                 .padding(.vertical, compact ? 2 : 3)
                 .background(
@@ -151,7 +153,52 @@ struct FrameReadinessRow: View {
                 )
                 .accessibilityLabel(item.spokenSummary)
             }
-            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Lays children left to right and wraps to a new line when the width runs
+/// out, so small pills never get squeezed into tall slivers.
+struct WrappingRow: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var lineWidth: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var widest: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if lineWidth > 0, lineWidth + spacing + size.width > maxWidth {
+                totalHeight += lineHeight + lineSpacing
+                widest = max(widest, lineWidth)
+                lineWidth = 0
+                lineHeight = 0
+            }
+            lineWidth += (lineWidth > 0 ? spacing : 0) + size.width
+            lineHeight = max(lineHeight, size.height)
+        }
+        totalHeight += lineHeight
+        widest = max(widest, lineWidth)
+        return CGSize(width: proposal.width ?? widest, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var lineHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += lineHeight + lineSpacing
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
         }
     }
 }

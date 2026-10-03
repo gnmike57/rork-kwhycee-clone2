@@ -1,56 +1,74 @@
 import SwiftUI
 import AVFoundation
 
+/// Every diagnostics tool, grouped as Live pipeline / Camera & media /
+/// Logs & export. Embedded in the Settings tab, which owns the scroll view
+/// and navigation stack.
 struct DiagnosticsView: View {
     @Environment(DeviceProfileManager.self) private var profileManager
-    /// For opening the Face Tracking sheet — Diagnostics has no browser of its own.
-    var viewModel: BrowserViewModel? = nil
-    @Environment(FaceTrackingController.self) private var tracking
+    let viewModel: BrowserViewModel
     @State private var diagnosticsService = DiagnosticsService()
     @State private var fingerprintService = FingerprintService()
-    @State private var constraintLog = ConstraintLogService()
-    @State private var siteHistory = SiteHistoryService()
     @State private var exportService = ExportBundleService()
     @State private var mediaReport: MediaMetadataReport?
     @State private var conformanceScore: MediaConformanceScore?
     @State private var showFilePicker = false
-    @State private var showFaceTrackingSheet = false
 
-    @State private var expandedSections: Set<String> = ["session"]
+    /// Which cards are open, remembered across launches.
+    @AppStorage("settings.diagnostics.expanded") private var expandedRaw: String = "pipeline"
+
+    /// The same live records the browser writes — never a second copy.
+    private var constraintLog: ConstraintLogService { viewModel.constraintLog }
+    private var siteHistory: SiteHistoryService { viewModel.siteHistory }
+
+    private var expandedSections: Set<String> {
+        Set(expandedRaw.split(separator: ",").map(String.init))
+    }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    sessionDiagnosticsSection
-                    pipelineSection
-                    if LivingStills.isAvailable {
-                        connectionSection
-                        faceTrackingSection
-                    }
-                    cameraComparisonSection
-                    fingerprintSection
-                    metadataInspectorSection
-                    audioRouteSection
-                    driftMonitorSection
-                    constraintLogSection
-                    siteHistorySection
-                    exportBundleSection
-                }
-                .padding(.horizontal)
-                .padding(.bottom, 40)
+        VStack(alignment: .leading, spacing: 22) {
+            group("Live pipeline") {
+                pipelineSection
+                sessionDiagnosticsSection
+                driftMonitorSection
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Diagnostics")
+            group("Camera & media") {
+                cameraComparisonSection
+                fingerprintSection
+                metadataInspectorSection
+                audioRouteSection
+            }
+            group("Logs & export") {
+                constraintLogSection
+                siteHistorySection
+                exportBundleSection
+            }
         }
-        .preferredColorScheme(.dark)
+    }
+
+    private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+            VStack(spacing: 10) {
+                content()
+            }
+        }
+    }
+
+    private func toggleSection(_ id: String) {
+        var set = expandedSections
+        if set.contains(id) { set.remove(id) } else { set.insert(id) }
+        expandedRaw = set.sorted().joined(separator: ",")
     }
 
     // MARK: - Pipeline
 
     private var pipelineSection: some View {
         sectionCard("Pipeline", icon: "waveform.path.ecg.rectangle", sectionID: "pipeline") {
-            if let viewModel {
                 VStack(spacing: 10) {
                     HStack(spacing: 8) {
                         PipelineDot(state: viewModel.pipelineIndicator)
@@ -109,11 +127,6 @@ struct DiagnosticsView: View {
                         .buttonStyle(.plain)
                     }
                 }
-            } else {
-                Text("Open Diagnostics from the browser to see the live pipeline tail.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
@@ -157,65 +170,6 @@ struct DiagnosticsView: View {
                         .font(.caption)
                 }
                 .frame(height: 100)
-            }
-        }
-    }
-
-    // MARK: - Live Link Face connection
-
-    private var connectionSection: some View {
-        NavigationLink {
-            LiveLinkConnectionView()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(tracking.mood.tint)
-                    .frame(width: 40, height: 40)
-                    .background(tracking.mood.fill, in: .circle)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Live Link Face")
-                        .font(.subheadline.weight(.semibold))
-                    Text(tracking.mode == .secondPhone
-                         ? tracking.statusLabel
-                         : "\(FaceTrackingMode.thisPhone.title) — \(tracking.statusLabel)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(14)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(.rect(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Face Tracking (Stage 1 dev surface)
-
-    private var faceTrackingSection: some View {
-        sectionCard("Face Tracking", icon: "face.smiling", sectionID: "face") {
-            FaceTrackingDevSection()
-            if viewModel != nil {
-                Button {
-                    Haptics.tick()
-                    showFaceTrackingSheet = true
-                } label: {
-                    Label("Open Face Tracking controls", systemImage: "slider.horizontal.3")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(.white.opacity(0.06), in: .rect(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                .sheet(isPresented: $showFaceTrackingSheet) {
-                    if let viewModel {
-                        FaceTrackingSheetView(viewModel: viewModel)
-                    }
-                }
             }
         }
     }
@@ -643,12 +597,9 @@ struct DiagnosticsView: View {
     ) -> some View {
         VStack(spacing: 0) {
             Button {
+                Haptics.tick()
                 withAnimation(.spring(duration: 0.3)) {
-                    if expandedSections.contains(sectionID) {
-                        expandedSections.remove(sectionID)
-                    } else {
-                        expandedSections.insert(sectionID)
-                    }
+                    toggleSection(sectionID)
                 }
             } label: {
                 HStack(spacing: 10) {
@@ -666,7 +617,9 @@ struct DiagnosticsView: View {
                         .rotationEffect(.degrees(expandedSections.contains(sectionID) ? 180 : 0))
                 }
                 .padding(14)
+                .contentShape(.rect)
             }
+            .buttonStyle(.plain)
 
             if expandedSections.contains(sectionID) {
                 Divider().padding(.horizontal, 14)

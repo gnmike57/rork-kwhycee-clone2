@@ -134,6 +134,9 @@ final class FaceTrackingController {
     private(set) var selfTestState: SelfTestState = .idle
     private var selfTestTimeoutTask: Task<Void, Never>?
 
+    /// A real face has arrived since the source started.
+    var hasLiveFace: Bool { hasSeenLiveFace }
+
     /// Link mode has a face, but Stream Head Rotation is off.
     var isExpressionOnly: Bool {
         mode == .secondPhone && hasSeenLiveFace && !headPose.hasSeenHeadPose

@@ -1,45 +1,23 @@
 import SwiftUI
 
+/// First-run screen: pick or scan a device profile before the app opens.
+/// Once inside the app, the same list lives in the Settings tab.
 struct ProfileSelectionView: View {
     let profileManager: DeviceProfileManager
     let onProfileSelected: () -> Void
-    @State private var showCreateProfile: Bool = false
-    @State private var profileToDelete: DeviceProfile?
-    @State private var showDeleteConfirm: Bool = false
-    @State private var expandedProfileID: UUID?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
                     headerSection
-                    
-                    if !profileManager.profiles.isEmpty {
-                        existingProfilesSection
-                    }
-
-                    createNewButton
+                    ProfileListSection(profileManager: profileManager, onProfileSelected: onProfileSelected)
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 40)
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Device Profiles")
-            .sheet(isPresented: $showCreateProfile) {
-                ProfileCreationView(profileManager: profileManager) {
-                    onProfileSelected()
-                }
-            }
-            .alert("Delete Profile?", isPresented: $showDeleteConfirm, presenting: profileToDelete) { profile in
-                Button("Delete", role: .destructive) {
-                    withAnimation(.spring(duration: 0.3)) {
-                        profileManager.deleteProfile(profile)
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: { profile in
-                Text("This will permanently remove \"\(profile.name)\" and all its device data.")
-            }
         }
         .preferredColorScheme(.dark)
         .accessibilityIdentifier("device-profiles")
@@ -76,18 +54,49 @@ struct ProfileSelectionView: View {
             }
         }
     }
+}
 
-    private var existingProfilesSection: some View {
+/// Saved profiles (expand for details, Use, Delete) plus Create New Profile.
+/// Shared by first-run and the Settings tab, so both always match.
+struct ProfileListSection: View {
+    let profileManager: DeviceProfileManager
+    var onProfileSelected: () -> Void = {}
+
+    @State private var showCreateProfile: Bool = false
+    @State private var profileToDelete: DeviceProfile?
+    @State private var showDeleteConfirm: Bool = false
+    @State private var expandedProfileID: UUID?
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Saved Profiles")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-                .tracking(0.5)
+            if !profileManager.profiles.isEmpty {
+                Text("Saved Profiles")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
 
-            ForEach(profileManager.profiles) { profile in
-                profileCard(profile)
+                ForEach(profileManager.profiles) { profile in
+                    profileCard(profile)
+                }
             }
+
+            createNewButton
+        }
+        .sheet(isPresented: $showCreateProfile) {
+            ProfileCreationView(profileManager: profileManager) {
+                onProfileSelected()
+            }
+        }
+        .alert("Delete Profile?", isPresented: $showDeleteConfirm, presenting: profileToDelete) { profile in
+            Button("Delete", role: .destructive) {
+                withAnimation(.spring(duration: 0.3)) {
+                    profileManager.deleteProfile(profile)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { profile in
+            Text("This will permanently remove \"\(profile.name)\" and all its device data.")
         }
     }
 
@@ -97,12 +106,9 @@ struct ProfileSelectionView: View {
 
         return VStack(spacing: 0) {
             Button {
+                Haptics.tick()
                 withAnimation(.spring(duration: 0.3)) {
-                    if isExpanded {
-                        expandedProfileID = nil
-                    } else {
-                        expandedProfileID = profile.id
-                    }
+                    expandedProfileID = isExpanded ? nil : profile.id
                 }
             } label: {
                 HStack(spacing: 14) {
@@ -150,7 +156,9 @@ struct ProfileSelectionView: View {
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
                 .padding(14)
+                .contentShape(.rect)
             }
+            .buttonStyle(.plain)
 
             if isExpanded {
                 expandedDetails(profile, isActive: isActive)
@@ -198,8 +206,15 @@ struct ProfileSelectionView: View {
                 }
 
                 HStack(spacing: 10) {
-                    if !isActive {
+                    if isActive {
+                        Label("In use", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.cyan)
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .background(.cyan.opacity(0.12), in: .rect(cornerRadius: 10))
+                    } else {
                         Button {
+                            Haptics.tick()
                             withAnimation(.spring(duration: 0.3)) {
                                 profileManager.selectProfile(profile)
                                 onProfileSelected()
@@ -207,22 +222,11 @@ struct ProfileSelectionView: View {
                         } label: {
                             Label("Use Profile", systemImage: "checkmark.circle")
                                 .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity, minHeight: 40)
                                 .background(.cyan, in: .rect(cornerRadius: 10))
                                 .foregroundStyle(.black)
                         }
-                    } else {
-                        Button {
-                            onProfileSelected()
-                        } label: {
-                            Label("Continue", systemImage: "arrow.right.circle")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(.cyan, in: .rect(cornerRadius: 10))
-                                .foregroundStyle(.black)
-                        }
+                        .buttonStyle(.plain)
                     }
 
                     Button(role: .destructive) {
@@ -231,9 +235,10 @@ struct ProfileSelectionView: View {
                     } label: {
                         Image(systemName: "trash")
                             .font(.subheadline)
-                            .frame(width: 40, height: 38)
+                            .frame(width: 44, height: 40)
                             .background(Color(.tertiarySystemFill), in: .rect(cornerRadius: 10))
                     }
+                    .accessibilityLabel("Delete \(profile.name)")
                 }
                 .padding(.top, 4)
             }
@@ -257,6 +262,7 @@ struct ProfileSelectionView: View {
 
     private var createNewButton: some View {
         Button {
+            Haptics.tick()
             showCreateProfile = true
         } label: {
             HStack(spacing: 12) {
@@ -291,5 +297,6 @@ struct ProfileSelectionView: View {
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(.rect(cornerRadius: 14))
         }
+        .buttonStyle(.plain)
     }
 }
