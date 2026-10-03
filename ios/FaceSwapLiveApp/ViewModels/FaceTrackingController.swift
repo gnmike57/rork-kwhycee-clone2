@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 import UIKit
 
@@ -116,6 +117,22 @@ final class FaceTrackingController {
     /// How the second iPhone's packets are arriving: rate, estimated loss,
     /// jitter and last-seen age.
     private(set) var packetHealth = PacketHealth.empty
+
+    /// Verdicts for the listener self-test.
+    enum SelfTestState: Equatable {
+        case idle
+        case sending
+        case passed
+        case failed
+    }
+
+    /// Reserved subject name for the self-test packet. It is answered once
+    /// and never allowed to drive the still or take the sender lock.
+    static let selfTestSubject = "kwhycee-self-test"
+
+    /// Result of the last listener self-test.
+    private(set) var selfTestState: SelfTestState = .idle
+    private var selfTestTimeoutTask: Task<Void, Never>?
 
     /// Link mode has a face, but Stream Head Rotation is off.
     var isExpressionOnly: Bool {
@@ -238,7 +255,7 @@ final class FaceTrackingController {
         self.defaults = defaults
         mode = FaceTrackingMode(rawValue: defaults.string(forKey: Self.modeKey) ?? "") ?? .thisPhone
         let storedPort = defaults.integer(forKey: Self.portKey)
-        port = (1...Int(UInt16.max)).contains(storedPort) ? UInt16(storedPort) : LiveLinkFacePacket.defaultPort
+        port = Self.sanitizedPort(storedPort) ?? LiveLinkFacePacket.defaultPort
         hasSeenGreenDotNote = defaults.bool(forKey: Self.greenDotNoteKey)
         hasSeenPillTip = defaults.bool(forKey: Self.pillTipKey)
     }
@@ -265,6 +282,57 @@ final class FaceTrackingController {
     func releaseSenderLock() {
         senderLock.release()
         senderName = nil
+    }
+
+    /// The typed port when it names a usable UDP port, nil otherwise.
+    nonisolated static func sanitizedPort(_ raw: Int) -> UInt16? {
+        (1...Int(UInt16.max)).contains(raw) ? UInt16(raw) : nil
+    }
+
+    /// Tries the source again after an unavailable verdict, e.g. a port that
+    /// was busy a moment ago.
+    func retryConnection() {
+        guard case .unavailable = state else { return }
+        stopSource()
+        state = isEnabled ? .standby : .off
+        reconcile()
+    }
+
+    /// Sends one synthetic Live Link Face packet to this phone's own listener.
+    /// A pass proves the port is open and packets decode; a silent real sender
+    /// then points at the sender app or the network, never at this app.
+    func sendSelfTest() {
+        guard mode == .secondPhone, isSourceRunning else { return }
+        selfTestTimeoutTask?.cancel()
+        selfTestState = .sending
+        let port = port
+        selfTestTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self else { return }
+            if self.selfTestState == .sending { self.selfTestState = .failed }
+        }
+        Task {
+            let packet = LiveLinkFacePacket(
+                deviceID: "kwhycee",
+                subjectName: Self.selfTestSubject,
+                frameNumber: 0,
+                subFrame: 0,
+                frameRateNumerator: 30,
+                frameRateDenominator: 1,
+                values: [Float](repeating: 0, count: FaceChannel.count)
+            )
+            let datagram = packet.encoded()
+            guard let loopback = NWEndpoint.Port(rawValue: port) else { return }
+            let connection = NWConnection(host: "127.0.0.1", port: loopback, using: .udp)
+            connection.stateUpdateHandler = { [weak connection] state in
+                guard let connection, case .ready = state else { return }
+                connection.send(content: datagram, completion: .contentProcessed { _ in
+                    connection.stateUpdateHandler = nil
+                    connection.cancel()
+                })
+            }
+            connection.start(queue: DispatchQueue.global(qos: .userInitiated))
+        }
     }
 
     /// Stops face tracking before the Preview tab opens its own camera.
@@ -396,6 +464,9 @@ final class FaceTrackingController {
         appliedTrackerRate = 0
         lostSince = nil
         didWarnForThisLoss = false
+        selfTestTimeoutTask?.cancel()
+        selfTestTimeoutTask = nil
+        selfTestState = .idle
     }
 
     // MARK: - Source events
@@ -417,6 +488,11 @@ final class FaceTrackingController {
         switch event {
         case .pose(var pose, let sender, let senderTime):
             if mode == .secondPhone {
+                if sender == Self.selfTestSubject {
+                    selfTestTimeoutTask?.cancel()
+                    selfTestState = .passed
+                    return
+                }
                 if let sender, !senderLock.accept(sender) {
                     packetRejections.record(.wrongSender)
                     return

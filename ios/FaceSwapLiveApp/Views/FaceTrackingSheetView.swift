@@ -13,6 +13,7 @@ struct FaceTrackingSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var chosenAddressID: String?
+    @State private var portDraft = ""
     @State private var copied = false
     @State private var copyResetTask: Task<Void, Never>?
     @State private var showFacePoints = false
@@ -47,7 +48,10 @@ struct FaceTrackingSheetView: View {
                 }
             }
             .fullScreenCover(isPresented: $showFacePoints) { facePoints }
-            .onAppear { loadPhotoControls() }
+            .onAppear {
+                loadPhotoControls()
+                if portDraft.isEmpty { portDraft = String(tracking.port) }
+            }
             .onChange(of: activeImageID) { _, _ in loadPhotoControls() }
             .onChange(of: tracking.addresses) { _, addresses in
                 settleChosenAddress(addresses)
@@ -203,7 +207,7 @@ struct FaceTrackingSheetView: View {
                     .padding(.vertical, 2)
 
                 HStack(alignment: .top, spacing: 14) {
-                    QRCodeView(message: "\(address.address):\(tracking.port)")
+                    LinkQRCodeView(message: "\(address.address):\(tracking.port)")
                         .frame(width: 92, height: 92)
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -227,6 +231,16 @@ struct FaceTrackingSheetView: View {
             listenRow
             packetHealthRows
             senderRow
+
+            NavigationLink {
+                LiveLinkConnectionView()
+            } label: {
+                Label("Full connection settings & self-test", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(.white.opacity(0.06), in: .rect(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
 
             Text(privacyNote)
                 .font(.caption2)
@@ -276,11 +290,13 @@ struct FaceTrackingSheetView: View {
             Text("Port")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
-            TextField("Port", value: $tracking.port, format: .number)
+            TextField("Port", text: $portDraft)
                 .keyboardType(.numberPad)
                 .font(.subheadline.monospacedDigit())
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 88)
+                .submitLabel(.done)
+                .onSubmit(applyPortDraft)
 
             Spacer()
 
@@ -289,6 +305,20 @@ struct FaceTrackingSheetView: View {
                 .tint(.green)
         }
         .frame(minHeight: 44)
+    }
+
+    /// The typed port takes effect on submit, not per keystroke — every port
+    /// change restarts the listener.
+    private func applyPortDraft() {
+        guard let raw = Int(portDraft),
+              let parsed = FaceTrackingController.sanitizedPort(raw) else {
+            portDraft = String(tracking.port)
+            return
+        }
+        portDraft = String(parsed)
+        guard parsed != tracking.port else { return }
+        tracking.port = parsed
+        Haptics.tick()
     }
 
     /// Live packet health: rate, estimated loss, jitter and last-seen age.
@@ -566,36 +596,5 @@ struct FaceTrackingSheetView: View {
             .font(.caption.weight(.heavy))
             .tracking(0.6)
             .foregroundStyle(.secondary)
-    }
-}
-
-/// A QR code of the address to copy. Live Link Face has no scan-to-add, so
-/// this is a readable version of the string, not a way to add a target.
-private struct QRCodeView: View {
-    let message: String
-
-    var body: some View {
-        if let image = Self.image(for: message) {
-            Image(uiImage: image)
-                .interpolation(.none)
-                .resizable()
-                .scaledToFit()
-                .padding(6)
-                .background(.white, in: .rect(cornerRadius: 8))
-        } else {
-            Color.white.opacity(0.06)
-                .aspectRatio(1, contentMode: .fit)
-        }
-    }
-
-    nonisolated static func image(for message: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(message.utf8)
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage else { return nil }
-        let scaled = output.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        return UIImage(cgImage: cgImage)
     }
 }

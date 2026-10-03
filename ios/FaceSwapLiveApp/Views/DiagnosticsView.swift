@@ -5,6 +5,7 @@ struct DiagnosticsView: View {
     @Environment(DeviceProfileManager.self) private var profileManager
     /// For opening the Face Tracking sheet — Diagnostics has no browser of its own.
     var viewModel: BrowserViewModel? = nil
+    @Environment(FaceTrackingController.self) private var tracking
     @State private var diagnosticsService = DiagnosticsService()
     @State private var fingerprintService = FingerprintService()
     @State private var constraintLog = ConstraintLogService()
@@ -24,6 +25,7 @@ struct DiagnosticsView: View {
                     sessionDiagnosticsSection
                     pipelineSection
                     if LivingStills.isAvailable {
+                        connectionSection
                         faceTrackingSection
                     }
                     cameraComparisonSection
@@ -157,6 +159,40 @@ struct DiagnosticsView: View {
                 .frame(height: 100)
             }
         }
+    }
+
+    // MARK: - Live Link Face connection
+
+    private var connectionSection: some View {
+        NavigationLink {
+            LiveLinkConnectionView()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(tracking.mood.tint)
+                    .frame(width: 40, height: 40)
+                    .background(tracking.mood.fill, in: .circle)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Live Link Face")
+                        .font(.subheadline.weight(.semibold))
+                    Text(tracking.mode == .secondPhone
+                         ? tracking.statusLabel
+                         : "\(FaceTrackingMode.thisPhone.title) — \(tracking.statusLabel)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Face Tracking (Stage 1 dev surface)
