@@ -59,52 +59,6 @@ final class VideoLibraryService {
         loadMetadata()
         repairInterruptedImports()
         removeOrphanedFiles()
-        renameCodeNamedClips()
-    }
-
-    // MARK: - Naming
-
-    /// True for names nobody typed: the picker's temp-file names (UUIDs, hex
-    /// runs, `trim.` copies) and the old "Imported Video" fallback.
-    nonisolated static func isCodeName(_ name: String) -> Bool {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty || trimmed == "Imported Video" { return true }
-        let lower = trimmed.lowercased()
-        if lower.hasPrefix("trim.") || lower.hasPrefix("pxl_") { return true }
-        if UUID(uuidString: trimmed) != nil { return true }
-        // Long runs of hex and dashes with no spaces are generated, not typed.
-        let hexish = CharacterSet(charactersIn: "0123456789abcdef-_")
-        if trimmed.count >= 12, !trimmed.contains(" "),
-           lower.unicodeScalars.allSatisfy({ hexish.contains($0) }) {
-            return true
-        }
-        return false
-    }
-
-    /// "Front clip 3" / "Back clip 1": the next free number for that camera.
-    func nextNumberedName(for subject: MediaSubject?, excluding id: UUID? = nil) -> String {
-        let prefix = subject == .document ? "Back clip " : "Front clip "
-        let used = Set(videos.compactMap { video -> Int? in
-            guard video.id != id, video.name.hasPrefix(prefix) else { return nil }
-            return Int(video.name.dropFirst(prefix.count))
-        })
-        var next = 1
-        while used.contains(next) { next += 1 }
-        return "\(prefix)\(next)"
-    }
-
-    /// One-time pass for clips imported before numbered names existed. Oldest
-    /// first, so the numbers follow import order. Typed names are untouched.
-    private func renameCodeNamedClips() {
-        let targets = videos
-            .filter { Self.isCodeName($0.name) }
-            .sorted { $0.importedAt < $1.importedAt }
-        guard !targets.isEmpty else { return }
-        for video in targets {
-            guard let index = videos.firstIndex(where: { $0.id == video.id }) else { continue }
-            videos[index].name = nextNumberedName(for: video.subject, excluding: video.id)
-        }
-        saveMetadata()
     }
 
     // MARK: - File resolution
@@ -223,12 +177,9 @@ final class VideoLibraryService {
         let originalFileName = "\(videoID.uuidString)_original.\(originalExt)"
         let originalDest = fileURL(for: originalFileName)
 
-        var name = name
-        let wantsNumberedName = Self.isCodeName(name)
-
         activeJob = ImportJob(
             videoID: videoID,
-            name: wantsNumberedName ? "New clip" : name,
+            name: name,
             stage: "Checking the clip…",
             progress: 0.01,
             etaSeconds: nil,
@@ -306,11 +257,6 @@ final class VideoLibraryService {
             cleanUpFiles(originalFileName, thumbnailFileName)
             lastImportError = "Import cancelled."
             return nil
-        }
-
-        if wantsNumberedName {
-            name = nextNumberedName(for: decision.subject)
-            activeJob?.name = name
         }
 
         let savedVideo = SavedVideo(

@@ -4,8 +4,8 @@ enum AppTab: Hashable {
     case preview
     case browser
     case myVideos
-    case liveLink
-    case settings
+    case diagnostics
+    case profile
 }
 
 struct ContentView: View {
@@ -60,11 +60,13 @@ struct ContentView: View {
                     }
                 )
             }
-            Tab("Live Link", systemImage: faceTracking.tabSymbol, value: AppTab.liveLink) {
-                LiveLinkTabView()
+            Tab("Diagnostics", systemImage: "waveform.badge.magnifyingglass", value: AppTab.diagnostics) {
+                DiagnosticsView(viewModel: browserViewModel)
             }
-            Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
-                SettingsView(profileManager: profileManager, browserViewModel: browserViewModel)
+            Tab("Profile", systemImage: "iphone.gen3", value: AppTab.profile) {
+                ProfileSelectionView(profileManager: profileManager) {
+                    hasSelectedProfile = true
+                }
             }
         }
         .environment(profileManager)
@@ -83,12 +85,6 @@ struct ContentView: View {
         }
         .onChange(of: selectedTab, initial: true) { _, tab in
             faceTracking.setPreviewTabSelected(tab == .preview)
-        }
-        // The Face Tracking sheet's "Open Live Link" lands here.
-        .onChange(of: browserViewModel.opensLiveLinkTab) { _, wantsLiveLink in
-            guard wantsLiveLink else { return }
-            browserViewModel.opensLiveLinkTab = false
-            selectedTab = .liveLink
         }
         .accessibilityIdentifier(profileManager.hasActiveProfile && hasSelectedProfile ? "main-app" : "device-profiles")
         .onChange(of: scenePhase, initial: true) { _, phase in

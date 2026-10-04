@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// Stage 4's Face Tracking sheet: source, a jump to the Live Link tab and the
-/// active photo's controls.
+/// Stage 4's Face Tracking sheet: source, the second-iPhone link, the
+/// active photo's controls and the Live Link Face setup guide.
 ///
 /// Reads only app-side state — nothing here reaches the page, adds a page
 /// name, or stores a live reading. Photo values save into per-photo memory.
@@ -12,9 +12,15 @@ struct FaceTrackingSheetView: View {
     @Environment(FaceTrackingController.self) private var tracking
     @Environment(\.dismiss) private var dismiss
 
+    @State private var chosenAddressID: String?
+    @State private var portDraft = ""
+    @State private var copied = false
+    @State private var copyResetTask: Task<Void, Never>?
     @State private var showFacePoints = false
     @State private var strength: Double = PhotoMemory.defaultStrength
     @State private var loadedPhotoID: ObjectIdentifier?
+
+    private let privacyNote = "This app only listens for face data. It may ask to find devices on the local network so those packets can arrive. Nothing is sent. If no packets arrive, on the other iPhone open Settings → Privacy & Security → Local Network and allow Live Link Face."
 
     var body: some View {
         @Bindable var tracking = tracking
@@ -23,7 +29,10 @@ struct FaceTrackingSheetView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     modeSection
-                    liveLinkRow
+                    if tracking.mode == .secondPhone {
+                        linkSection
+                        setupGuide
+                    }
                     photoSection
                     hapticsSection
                 }
@@ -41,14 +50,19 @@ struct FaceTrackingSheetView: View {
             .fullScreenCover(isPresented: $showFacePoints) { facePoints }
             .onAppear {
                 loadPhotoControls()
+                if portDraft.isEmpty { portDraft = String(tracking.port) }
             }
             .onChange(of: activeImageID) { _, _ in loadPhotoControls() }
+            .onChange(of: tracking.addresses) { _, addresses in
+                settleChosenAddress(addresses)
+            }
             .onChange(of: tracking.neutralBaseline) { _, baseline in
                 // A completed calibration belongs to the photo on screen.
                 if let baseline, let still = activeStill {
                     viewModel.setLivingCalibration(baseline, for: still.image)
                 }
             }
+            .onDisappear { copyResetTask?.cancel() }
         }
         .preferredColorScheme(.dark)
     }
@@ -165,41 +179,243 @@ struct FaceTrackingSheetView: View {
         .background(Color.orange.opacity(0.1), in: .rect(cornerRadius: 10))
     }
 
-    // MARK: - Live Link
+    // MARK: - Second iPhone
 
-    /// One status line; the full connection screen lives in the Live Link tab.
-    private var liveLinkRow: some View {
-        Button {
-            Haptics.tick()
-            viewModel.opensLiveLinkTab = true
-            dismiss()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(tracking.mood.tint)
-                    .frame(width: 38, height: 38)
-                    .background(tracking.mood.fill, in: .circle)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Open Live Link")
-                        .font(.subheadline.weight(.semibold))
-                    Text(tracking.capsuleLine ?? tracking.statusLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Image(systemName: "arrow.up.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
-            }
-            .frame(minHeight: 44)
-            .contentShape(.rect)
+    private var chosenAddress: LocalAddress? {
+        if let chosenAddressID, let match = tracking.addresses.first(where: { $0.id == chosenAddressID }) {
+            return match
         }
-        .buttonStyle(.plain)
+        return tracking.addresses.first
+    }
+
+    private func settleChosenAddress(_ addresses: [LocalAddress]) {
+        guard !addresses.isEmpty else { return }
+        if let chosenAddressID, addresses.contains(where: { $0.id == chosenAddressID }) { return }
+        chosenAddressID = addresses.first?.id
+    }
+
+    private var linkSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Second iPhone", icon: "iphone.radiowaves.left.and.right")
+
+            if let address = chosenAddress {
+                Text("\(address.address) : \(tracking.port)")
+                    .font(.system(size: 21, weight: .semibold, design: .monospaced))
+                    .monospacedDigit()
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 2)
+
+                HStack(alignment: .top, spacing: 14) {
+                    LinkQRCodeView(message: "\(address.address):\(tracking.port)")
+                        .frame(width: 92, height: 92)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        if tracking.addresses.count > 1 {
+                            networkPicker
+                        }
+                        copyButton(address)
+                        Text("\(address.label) · \(address.interface)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Label("Not on Wi-Fi or a hotspot. An IPv6-only network isn't supported.",
+                      systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            listenRow
+            packetHealthRows
+            senderRow
+
+            NavigationLink {
+                LiveLinkConnectionView()
+            } label: {
+                Label("Full connection settings & self-test", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.caption.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 40)
+                    .background(.white.opacity(0.06), in: .rect(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+
+            Text(privacyNote)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         .padding(14)
         .faceGlass(cornerRadius: 14)
-        .accessibilityHint("Address, port, self-test and setup guide")
+        .onAppear { settleChosenAddress(tracking.addresses) }
+    }
+
+    @ViewBuilder
+    private var networkPicker: some View {
+        Picker("Network", selection: $chosenAddressID) {
+            ForEach(tracking.addresses) { address in
+                Text(address.label).tag(Optional(address.id))
+            }
+        }
+        .font(.caption)
+    }
+
+    private func copyButton(_ address: LocalAddress) -> some View {
+        Button {
+            Haptics.tick()
+            UIPasteboard.general.string = "\(address.address):\(tracking.port)"
+            copied = true
+            copyResetTask?.cancel()
+            copyResetTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                copied = false
+            }
+        } label: {
+            Label(copied ? "Copied" : "Copy address",
+                  systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(.white.opacity(0.08), in: .rect(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var listenRow: some View {
+        @Bindable var tracking = tracking
+
+        return HStack(spacing: 12) {
+            Text("Port")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField("Port", text: $portDraft)
+                .keyboardType(.numberPad)
+                .font(.subheadline.monospacedDigit())
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 88)
+                .submitLabel(.done)
+                .onSubmit(applyPortDraft)
+
+            Spacer()
+
+            Toggle("Listen", isOn: $tracking.isEnabled)
+                .font(.subheadline.weight(.semibold))
+                .tint(.green)
+        }
+        .frame(minHeight: 44)
+    }
+
+    /// The typed port takes effect on submit, not per keystroke — every port
+    /// change restarts the listener.
+    private func applyPortDraft() {
+        guard let raw = Int(portDraft),
+              let parsed = FaceTrackingController.sanitizedPort(raw) else {
+            portDraft = String(tracking.port)
+            return
+        }
+        portDraft = String(parsed)
+        guard parsed != tracking.port else { return }
+        tracking.port = parsed
+        Haptics.tick()
+    }
+
+    /// Live packet health: rate, estimated loss, jitter and last-seen age.
+    @ViewBuilder
+    private var packetHealthRows: some View {
+        let health = tracking.packetHealth
+        VStack(spacing: 0) {
+            healthRow("Rate",
+                      health.packetCount == 0 ? nil : String(format: "%.0f/s", health.ratePerSecond))
+            Divider().padding(.leading, 96)
+            healthRow("Loss",
+                      health.packetCount == 0 ? nil : String(format: "%.0f%%", health.lostFraction * 100))
+            Divider().padding(.leading, 96)
+            healthRow("Jitter",
+                      health.packetCount == 0 ? nil : "\(Int(health.jitterSeconds * 1000)) ms")
+            Divider().padding(.leading, 96)
+            healthRow("Last seen",
+                      health.packetCount == 0 ? nil : String(format: "%.1f s ago", health.secondsSinceLastPacket))
+        }
+        .background(.white.opacity(0.05), in: .rect(cornerRadius: 10))
+    }
+
+    private func healthRow(_ label: String, _ value: String?) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 96, alignment: .leading)
+            Text(value ?? "—")
+                .font(.caption.monospacedDigit())
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minHeight: 36)
+    }
+
+    @ViewBuilder
+    private var senderRow: some View {
+        if let sender = tracking.senderName {
+            HStack(spacing: 10) {
+                Image(systemName: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Locked to \(sender)")
+                        .font(.caption.weight(.semibold))
+                    Text("Only this phone can drive the still")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Switch Sender") {
+                    Haptics.tick()
+                    tracking.releaseSenderLock()
+                }
+                .font(.caption.weight(.semibold))
+            }
+            .frame(minHeight: 44)
+        }
+    }
+
+    // MARK: - Setup guide
+
+    private let setupSteps: [String] = [
+        "Install Live Link Face (iPhone 12 or newer).",
+        "Join the same Wi-Fi — or this phone's Personal Hotspot.",
+        "Add a target with this address and port.",
+        "Set Capture Mode: ARKit.",
+        "Turn on Stream Head Rotation.",
+        "Allow Local Network on that phone.",
+        "Tap LIVE.",
+    ]
+
+    private var setupGuide: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Setup guide", icon: "list.number")
+
+            ForEach(Array(setupSteps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .top, spacing: 10) {
+                    Text("\(index + 1)")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.cyan)
+                        .frame(width: 20, height: 20)
+                        .background(.cyan.opacity(0.14), in: .circle)
+                    Text(step)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Text("Live Link Face has no scan-to-add, so the QR only shows what to copy.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .faceGlass(cornerRadius: 14)
     }
 
     // MARK: - Photo controls

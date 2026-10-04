@@ -95,10 +95,6 @@ final class BrowserViewModel {
     /// Set when Media Controls should open the My Media tab as it closes.
     var opensMyMediaAfterDismiss: Bool = false
 
-    /// Set by the Face Tracking sheet's "Open Live Link"; the app root
-    /// switches tabs and clears it.
-    var opensLiveLinkTab: Bool = false
-
     /// Camera a site is currently pulling from, reported by the page.
     var activeStreamFacing: CameraFacing?
     var isLiveStreamActive: Bool = false

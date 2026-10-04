@@ -33,14 +33,10 @@ struct MyMediaView: View {
                             videoList
                         }
                     }
-                    .frame(height: geo.size.height * 0.46)
-                    // The library scrolls under nothing: it ends at the tray's
-                    // top edge instead of peeking out beneath it.
-                    .clipped()
+                    .frame(height: geo.size.height * 0.48)
 
                     SourceDeckView(viewModel: browserViewModel)
                         .frame(maxHeight: .infinity)
-                        .padding(.top, 6)
                 }
             }
             .background(MediaTheme.canvas)
@@ -48,12 +44,11 @@ struct MyMediaView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     PhotosPicker(selection: $videoPickerItem, matching: .videos) {
-                        Image(systemName: "plus")
-                            .font(.body.weight(.semibold))
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(MediaTheme.accent)
                     }
-                    .tint(MediaTheme.accent)
                     .disabled(isImporting)
-                    .accessibilityLabel("Import video")
                 }
             }
         }
@@ -153,10 +148,8 @@ struct MyMediaView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.top, 12)
-            .padding(.bottom, 18)
+            .padding(.vertical, 12)
         }
-        .scrollIndicators(.hidden)
     }
 
     private func importProgressCard(_ job: ImportJob) -> some View {
@@ -235,11 +228,21 @@ struct MyMediaView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
 
-                    Text(clipDetailLine(video))
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.72))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                    HStack(spacing: 6) {
+                        if video.originalWidth > 0 {
+                            Text("\(video.originalWidth)×\(video.originalHeight)")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        if video.originalDuration > 0 {
+                            Text(formatDuration(video.originalDuration))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(formatFileSize(video.fileSizeBytes))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
 
                     SubjectStatusBadge(video: video)
                 }
@@ -372,19 +375,6 @@ struct MyMediaView: View {
         Task {
             await videoLibrary.prepare(video, as: subject, profile: profileManager.activeProfile)
         }
-    }
-
-    /// Size, length and file size as one tidy line.
-    private func clipDetailLine(_ video: SavedVideo) -> String {
-        var parts: [String] = []
-        if video.originalWidth > 0 {
-            parts.append("\(video.originalWidth)×\(video.originalHeight)")
-        }
-        if video.originalDuration > 0 {
-            parts.append(formatDuration(video.originalDuration))
-        }
-        parts.append(formatFileSize(video.fileSizeBytes))
-        return parts.joined(separator: " · ")
     }
 
     private func formatDuration(_ seconds: Double) -> String {

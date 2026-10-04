@@ -153,22 +153,16 @@ struct SourceDeckView: View {
                             picker2: $backImagePicker2
                         )
                     }
-                    // Both columns take the taller one's height.
-                    .fixedSize(horizontal: false, vertical: true)
 
                     if viewModel.behavior.settings.frontFaceButtons {
                         facePrepCard
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.top, 4)
                 .padding(.bottom, 16)
             }
             .scrollIndicators(.hidden)
-            .scrollClipDisabled(false)
-            // The floating tab bar sits over the bottom of the tray, so the last
-            // slot's buttons need room to scroll clear of it.
-            .contentMargins(.bottom, 72, for: .scrollContent)
+            .safeAreaPadding(.bottom, 12)
         }
         .background {
             UnevenRoundedRectangle(cornerRadii: .init(topLeading: 22, topTrailing: 22))
@@ -282,7 +276,7 @@ struct SourceDeckView: View {
             )
         }
         .padding(10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .top)
         .background(MediaTheme.well, in: .rect(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
@@ -332,28 +326,20 @@ struct SourceDeckView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        if !hasSource && !canPick {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 9, weight: .bold))
-                        }
-                        Text(hasSource ? (isVideo ? "Video" : "Photo") : (canPick ? "Empty" : "Locked"))
-                            .font(.caption.weight(.semibold))
-                    }
+                    Text(hasSource ? (isVideo ? "Video" : "Photo") : (canPick ? "Empty" : "Locked"))
+                        .font(.caption.weight(.semibold))
                     Text(slotDetail(hasSource: hasSource, isVideo: isVideo, canPick: canPick, attention: attention))
                         .font(.caption2)
                         .foregroundStyle(attention == nil ? Color.secondary : FrameCheckTheme.color(for: attention ?? .fits))
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2)
+                    // How this item stands against the sizes sites really ask
+                    // for, so nothing has to be opened to find out.
+                    if !readiness.isEmpty {
+                        FrameReadinessRow(items: readiness, compact: true)
+                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
-            // How this item stands against the sizes sites really ask for, at
-            // full slot width so the pills sit in one row instead of squeezed
-            // beside the thumbnail.
-            if !readiness.isEmpty {
-                FrameReadinessRow(items: readiness, compact: true)
+                Spacer(minLength: 0)
             }
 
             HStack(spacing: 6) {
@@ -409,7 +395,6 @@ struct SourceDeckView: View {
 
     private func slotDetail(hasSource: Bool, isVideo: Bool, canPick: Bool, attention: FrameVerdict.Kind?) -> String {
         guard hasSource else { return canPick ? "Photo or video" : "Set Media 1 first" }
-        // "Set Media 1 first" reads on its own line under the lock.
         if isVideo { return "From library · centred to fit" }
         switch attention {
         case .recentre: return "Frame Check: recentre or crop"
